@@ -144,6 +144,7 @@ cython_debug/
 # IDE settings
 
 .idea/
+.vscode/
 
 # Project specific
 data/
