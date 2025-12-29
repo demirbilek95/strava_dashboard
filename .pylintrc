@@ -1,0 +1,40 @@
+[MASTER]
+# Files or directories to be skipped
+ignore=CVS,.git,__pycache__,data,notebooks,.venv,venv
+
+# Use multiple processes to speed up Pylint
+jobs=0
+
+[MESSAGES CONTROL]
+# Disable specific warnings
+disable=
+    C0103,  # invalid-name (allow short variable names like df, db, hr)
+    C0114,  # missing-module-docstring
+    C0115,  # missing-class-docstring
+    C0116,  # missing-function-docstring (we have some docs but not all)
+    R0913,  # too-many-arguments
+    R0914,  # too-many-locals
+    W0212,  # protected-access
+    R0801,  # duplicate-code (common in view files)
+
+[FORMAT]
+# Maximum number of characters on a single line
+max-line-length=100
+
+# Maximum number of lines in a module
+max-module-lines=500
+
+[BASIC]
+# Good variable names which should always be accepted
+good-names=i,j,k,ex,Run,_,df,db,id,hr,pm,ps,z1,z2,z3,z4,c1,c2,c3,c4,c5
+
+[DESIGN]
+# Maximum number of arguments for function / method
+max-args=7
+
+# Maximum number of locals for function / method body
+max-locals=20
+
+[IMPORTS]
+# Deprecated modules which should not be used
+deprecated-modules=optparse,tkinter.tix
