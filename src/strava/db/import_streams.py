@@ -5,18 +5,18 @@ import gzip
 import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 import pandas as pd
 
 import tcxparser
 import garmin_fit_sdk
 
-from db_manager import DatabaseManager
+from db_manager import DatabaseManager  # pylint: disable=import-error
 
 
 def _parse_timestamp(ts_str: str) -> Optional[Any]:
     if not isinstance(ts_str, str):
         return None
-    from datetime import datetime
 
     try:
         return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))

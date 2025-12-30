@@ -1,8 +1,8 @@
 """Import activities from CSV into the database."""
 
-import pandas as pd
 from pathlib import Path
-from db_manager import DatabaseManager
+import pandas as pd
+from db_manager import DatabaseManager  # pylint: disable=import-error
 
 
 def _extract_core_data(row):
@@ -137,7 +137,7 @@ def import_activities_from_csv(csv_path: str = None, db_path: str = None):
             if (idx + 1) % 100 == 0:
                 print(f"  Imported {idx + 1}/{len(df)} activities...")
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             error_count += 1
             print(f"  ⚠️  Error importing activity {row.get('Activity ID', 'unknown')}: {e}")
 

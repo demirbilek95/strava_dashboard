@@ -1,9 +1,9 @@
 import streamlit as st
-from data import load_data
-from views.general import page_general
-from views.activities import page_activity_run_details
-from views.races import page_races
-from views.deep_dive import page_recent_activities
+from views.general import page_general  # pylint: disable=import-error
+from views.activities import page_activity_run_details  # pylint: disable=import-error
+from views.races import page_races  # pylint: disable=import-error
+from views.deep_dive import page_recent_activities  # pylint: disable=import-error
+from data import load_data  # pylint: disable=import-error
 
 # Set page config
 st.set_page_config(page_title="Strava Analytics", layout="wide")

@@ -3,9 +3,9 @@
 
 import sys
 
-from db_manager import DatabaseManager
-from import_activities import import_activities_from_csv
-from import_streams import import_activity_streams
+from db_manager import DatabaseManager  # pylint: disable=import-error
+from import_activities import import_activities_from_csv  # pylint: disable=import-error
+from import_streams import import_activity_streams  # pylint: disable=import-error
 
 
 def import_all(db_path: str = None, skip_existing_streams: bool = True):

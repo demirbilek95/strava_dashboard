@@ -60,7 +60,7 @@ class DatabaseManager:
         if not query_path.exists():
             raise FileNotFoundError(f"Query file not found: {query_path}")
 
-        with open(query_path, "r") as f:
+        with open(query_path, "r", encoding="utf-8") as f:
             return f.read()
 
     def create_tables(self):

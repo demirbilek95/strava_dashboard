@@ -1,14 +1,13 @@
+from pathlib import Path
 import streamlit as st
 import pandas as pd
-from pathlib import Path
+from db.db_manager import DatabaseManager  # pylint: disable=import-error
 
 
 @st.cache_data
 def load_data():
     """Load activity data from the database."""
     try:
-        from db.db_manager import DatabaseManager
-
         # Get database path
         current_dir = Path(__file__).parent
         project_root = current_dir.parent.parent
@@ -16,7 +15,8 @@ def load_data():
 
         if not db_path.exists():
             st.error(
-                f"Database not found at {db_path}. Please run: poetry run python src/strava/db/import_all.py"
+                f"Database not found at {db_path}. "
+                "Please run: poetry run python src/strava/db/import_all.py"
             )
             return pd.DataFrame()
 
@@ -47,7 +47,7 @@ def load_data():
 
         return df
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         st.error(f"Error loading data from database: {e}")
         return pd.DataFrame()
 
@@ -64,8 +64,6 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
         DataFrame with stream data (timestamp, HR, GPS, pace, etc.)
     """
     try:
-        from db.db_manager import DatabaseManager
-
         current_dir = Path(__file__).parent
         project_root = current_dir.parent.parent
         db_path = project_root / "data" / "strava.db"
@@ -87,7 +85,7 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
 
         return df
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         st.error(f"Error loading stream data: {e}")
         return pd.DataFrame()
 
@@ -101,8 +99,6 @@ def get_activities_with_streams() -> pd.DataFrame:
         DataFrame with activity IDs that have stream data
     """
     try:
-        from db.db_manager import DatabaseManager
-
         current_dir = Path(__file__).parent
         project_root = current_dir.parent.parent
         db_path = project_root / "data" / "strava.db"
@@ -116,5 +112,5 @@ def get_activities_with_streams() -> pd.DataFrame:
 
         return pd.DataFrame([dict(row) for row in rows])
 
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return pd.DataFrame()
