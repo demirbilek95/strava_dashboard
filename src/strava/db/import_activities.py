@@ -5,6 +5,93 @@ from pathlib import Path
 from db_manager import DatabaseManager
 
 
+def _extract_core_data(row):
+    return {
+        "activity_id": (int(row["Activity ID"]) if pd.notna(row.get("Activity ID")) else None),
+        "activity_date": (
+            row["Activity Date"].isoformat() if pd.notna(row.get("Activity Date")) else None
+        ),
+        "activity_name": (
+            str(row["Activity Name"]) if pd.notna(row.get("Activity Name")) else None
+        ),
+        "activity_type": (
+            str(row["Activity Type"]) if pd.notna(row.get("Activity Type")) else None
+        ),
+        "activity_description": (
+            str(row["Activity Description"]) if pd.notna(row.get("Activity Description")) else None
+        ),
+    }
+
+
+def _add_metrics(row, activity_data):
+    # Time metrics
+    if pd.notna(row.get("Elapsed Time")):
+        activity_data["elapsed_time"] = int(row["Elapsed Time"])
+    if pd.notna(row.get("Moving Time")):
+        activity_data["moving_time"] = int(row["Moving Time"])
+
+    # Distance
+    if pd.notna(row.get("Distance")):
+        activity_data["distance"] = float(row["Distance"]) * 1000
+
+    # Speed
+    if pd.notna(row.get("Max Speed")):
+        activity_data["max_speed"] = float(row["Max Speed"])
+    if pd.notna(row.get("Average Speed")):
+        activity_data["average_speed"] = float(row["Average Speed"])
+
+    # Elevation
+    for field in ["Elevation Gain", "Elevation Loss", "Elevation Low", "Elevation High"]:
+        db_field = field.lower().replace(" ", "_")
+        if pd.notna(row.get(field)):
+            activity_data[db_field] = float(row[field])
+
+    for field in ["Max Grade", "Average Grade"]:
+        db_field = field.lower().replace(" ", "_")
+        if pd.notna(row.get(field)):
+            activity_data[db_field] = float(row[field])
+
+    # HR, Cadence, Power, Energy, Temp
+    mappings = [
+        ("Max Heart Rate", "max_heart_rate", int),
+        ("Average Heart Rate", "average_heart_rate", int),
+        ("Max Cadence", "max_cadence", int),
+        ("Average Cadence", "average_cadence", int),
+        ("Max Watts", "max_watts", int),
+        ("Average Watts", "average_watts", int),
+        ("Weighted Average Power", "weighted_average_power", int),
+        ("Calories", "calories", int),
+        ("Relative Effort", "relative_effort", int),
+        ("Total Work", "total_work", int),
+        ("Max Temperature", "max_temperature", float),
+        ("Average Temperature", "average_temperature", float),
+        ("Athlete Weight", "athlete_weight", float),
+    ]
+
+    for csv_field, db_field, cast_type in mappings:
+        if pd.notna(row.get(csv_field)):
+            activity_data[db_field] = cast_type(row[csv_field])
+
+
+def _add_metadata(row, activity_data):
+    if pd.notna(row.get("Commute")):
+        commute_val = str(row["Commute"]).lower()
+        activity_data["commute"] = 1 if commute_val in ["true", "1", "yes"] else 0
+
+    if pd.notna(row.get("Activity Gear")):
+        activity_data["gear"] = str(row["Activity Gear"])
+
+    if pd.notna(row.get("Filename")):
+        activity_data["filename"] = str(row["Filename"])
+
+
+def _extract_activity_data(row):
+    activity_data = _extract_core_data(row)
+    _add_metrics(row, activity_data)
+    _add_metadata(row, activity_data)
+    return activity_data
+
+
 def import_activities_from_csv(csv_path: str = None, db_path: str = None):
     """
     Import activities from activities.csv into the database.
@@ -42,105 +129,7 @@ def import_activities_from_csv(csv_path: str = None, db_path: str = None):
 
     for idx, row in df.iterrows():
         try:
-            # Map CSV columns to database schema
-            activity_data = {
-                "activity_id": (
-                    int(row["Activity ID"]) if pd.notna(row.get("Activity ID")) else None
-                ),
-                "activity_date": (
-                    row["Activity Date"].isoformat() if pd.notna(row.get("Activity Date")) else None
-                ),
-                "activity_name": (
-                    str(row["Activity Name"]) if pd.notna(row.get("Activity Name")) else None
-                ),
-                "activity_type": (
-                    str(row["Activity Type"]) if pd.notna(row.get("Activity Type")) else None
-                ),
-                "activity_description": (
-                    str(row["Activity Description"])
-                    if pd.notna(row.get("Activity Description"))
-                    else None
-                ),
-            }
-
-            # Time metrics (convert to seconds if needed)
-            if pd.notna(row.get("Elapsed Time")):
-                activity_data["elapsed_time"] = int(row["Elapsed Time"])
-            if pd.notna(row.get("Moving Time")):
-                activity_data["moving_time"] = int(row["Moving Time"])
-
-            # Distance (convert to meters if in km)
-            if pd.notna(row.get("Distance")):
-                # Assuming distance is in km in CSV
-                activity_data["distance"] = float(row["Distance"]) * 1000
-
-            # Speed metrics
-            if pd.notna(row.get("Max Speed")):
-                activity_data["max_speed"] = float(row["Max Speed"])
-            if pd.notna(row.get("Average Speed")):
-                activity_data["average_speed"] = float(row["Average Speed"])
-
-            # Elevation metrics
-            for field in ["Elevation Gain", "Elevation Loss", "Elevation Low", "Elevation High"]:
-                db_field = field.lower().replace(" ", "_")
-                if pd.notna(row.get(field)):
-                    activity_data[db_field] = float(row[field])
-
-            for field in ["Max Grade", "Average Grade"]:
-                db_field = field.lower().replace(" ", "_")
-                if pd.notna(row.get(field)):
-                    activity_data[db_field] = float(row[field])
-
-            # Heart rate metrics
-            if pd.notna(row.get("Max Heart Rate")):
-                activity_data["max_heart_rate"] = int(row["Max Heart Rate"])
-            if pd.notna(row.get("Average Heart Rate")):
-                activity_data["average_heart_rate"] = int(row["Average Heart Rate"])
-
-            # Cadence metrics
-            if pd.notna(row.get("Max Cadence")):
-                activity_data["max_cadence"] = int(row["Max Cadence"])
-            if pd.notna(row.get("Average Cadence")):
-                activity_data["average_cadence"] = int(row["Average Cadence"])
-
-            # Power metrics
-            if pd.notna(row.get("Max Watts")):
-                activity_data["max_watts"] = int(row["Max Watts"])
-            if pd.notna(row.get("Average Watts")):
-                activity_data["average_watts"] = int(row["Average Watts"])
-            if pd.notna(row.get("Weighted Average Power")):
-                activity_data["weighted_average_power"] = int(row["Weighted Average Power"])
-
-            # Energy metrics
-            if pd.notna(row.get("Calories")):
-                activity_data["calories"] = int(row["Calories"])
-            if pd.notna(row.get("Relative Effort")):
-                activity_data["relative_effort"] = int(row["Relative Effort"])
-            if pd.notna(row.get("Total Work")):
-                activity_data["total_work"] = int(row["Total Work"])
-
-            # Temperature metrics
-            if pd.notna(row.get("Max Temperature")):
-                activity_data["max_temperature"] = float(row["Max Temperature"])
-            if pd.notna(row.get("Average Temperature")):
-                activity_data["average_temperature"] = float(row["Average Temperature"])
-
-            # Other fields
-            if pd.notna(row.get("Athlete Weight")):
-                activity_data["athlete_weight"] = float(row["Athlete Weight"])
-
-            # Commute (convert to boolean)
-            if pd.notna(row.get("Commute")):
-                commute_val = str(row["Commute"]).lower()
-                activity_data["commute"] = 1 if commute_val in ["true", "1", "yes"] else 0
-
-            if pd.notna(row.get("Activity Gear")):
-                activity_data["gear"] = str(row["Activity Gear"])
-
-            if pd.notna(row.get("Filename")):
-                activity_data["filename"] = str(row["Filename"])
-
-            # Insert into database
+            activity_data = _extract_activity_data(row)
             db.insert_activity(activity_data)
             imported_count += 1
 
@@ -152,19 +141,19 @@ def import_activities_from_csv(csv_path: str = None, db_path: str = None):
             error_count += 1
             print(f"  ⚠️  Error importing activity {row.get('Activity ID', 'unknown')}: {e}")
 
-    print(f"\n✅ Import complete!")
+    print("\n✅ Import complete!")
     print(f"  Successfully imported: {imported_count} activities")
     if error_count > 0:
         print(f"  Errors: {error_count} activities")
 
     # Print database stats
     stats = db.get_database_stats()
-    print(f"\n📈 Database Statistics:")
+    print("\n📈 Database Statistics:")
     print(f"  Total activities: {stats['total_activities']}")
     if "date_range" in stats:
         print(f"  Date range: {stats['date_range']['start']} to {stats['date_range']['end']}")
     if "activity_types" in stats:
-        print(f"  Activity types:")
+        print("  Activity types:")
         for activity_type, count in stats["activity_types"].items():
             print(f"    - {activity_type}: {count}")
 

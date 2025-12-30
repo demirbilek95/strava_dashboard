@@ -116,5 +116,5 @@ def get_activities_with_streams() -> pd.DataFrame:
 
         return pd.DataFrame([dict(row) for row in rows])
 
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()

@@ -17,10 +17,59 @@ def _parse_timestamp(ts_str: str) -> Optional[Any]:
     if not isinstance(ts_str, str):
         return None
     from datetime import datetime
+
     try:
         return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+
+
+def _extract_tcx_record(  # pylint: disable=too-many-positional-arguments
+    i,
+    timestamps,
+    start_dt,
+    hr_values,
+    altitude_values,
+    distance_values,
+    cadence_values,
+    power_values,
+    position_values,
+):
+    raw_ts = timestamps[i]
+    timestamp = _parse_timestamp(raw_ts) if isinstance(raw_ts, str) else raw_ts
+
+    if not timestamp:
+        return None
+
+    record = {
+        "timestamp": timestamp.isoformat() if timestamp else None,
+    }
+
+    if start_dt and timestamp:
+        try:
+            record["elapsed_seconds"] = (timestamp - start_dt).total_seconds()
+        except (ValueError, TypeError):
+            pass
+
+    def add_val(key, vals, cast_func):
+        if i < len(vals) and vals[i] is not None:
+            record[key] = cast_func(vals[i])
+
+    add_val("heart_rate", hr_values, int)
+    add_val("altitude", altitude_values, float)
+    add_val("distance", distance_values, float)
+    add_val("cadence", cadence_values, int)
+    add_val("power", power_values, int)
+
+    if i < len(position_values) and position_values[i] is not None:
+        lat, lon = position_values[i]
+        if lat is not None:
+            record["latitude"] = float(lat)
+        if lon is not None:
+            record["longitude"] = float(lon)
+
+    record["source_type"] = "TCX"
+    return record
 
 
 def parse_tcx_file(file_path: Path) -> Optional[List[Dict[str, Any]]]:
@@ -38,7 +87,7 @@ def parse_tcx_file(file_path: Path) -> Optional[List[Dict[str, Any]]]:
 
         tcx = tcxparser.TCXParser(tmp_path)
         timestamps = tcx.time_values()
-        
+
         if not timestamps:
             return None
 
@@ -57,56 +106,34 @@ def parse_tcx_file(file_path: Path) -> Optional[List[Dict[str, Any]]]:
         start_dt = _parse_timestamp(start_time) if isinstance(start_time, str) else start_time
 
         for i in range(num_points):
-            raw_ts = timestamps[i]
-            timestamp = _parse_timestamp(raw_ts) if isinstance(raw_ts, str) else raw_ts
-
-            if not timestamp:
-                continue
-
-            record = {
-                "timestamp": timestamp.isoformat() if timestamp else None,
-            }
-
-            if start_dt and timestamp:
-                try:
-                    record["elapsed_seconds"] = (timestamp - start_dt).total_seconds()
-                except (ValueError, TypeError):
-                    pass
-
-            def add_val(key, vals, idx, cast_func):
-                if idx < len(vals) and vals[idx] is not None:
-                    record[key] = cast_func(vals[idx])
-
-            add_val("heart_rate", hr_values, i, int)
-            add_val("altitude", altitude_values, i, float)
-            add_val("distance", distance_values, i, float)
-            add_val("cadence", cadence_values, i, int)
-            add_val("power", power_values, i, int)
-
-            if i < len(position_values) and position_values[i] is not None:
-                lat, lon = position_values[i]
-                if lat is not None:
-                    record["latitude"] = float(lat)
-                if lon is not None:
-                    record["longitude"] = float(lon)
-
-            record["source_type"] = "TCX"
-            stream_records.append(record)
+            record = _extract_tcx_record(
+                i,
+                timestamps,
+                start_dt,
+                hr_values,
+                altitude_values,
+                distance_values,
+                cadence_values,
+                power_values,
+                position_values,
+            )
+            if record:
+                stream_records.append(record)
 
         if str(file_path).endswith(".gz") and os.path.exists(tmp_path):
             os.remove(tmp_path)
 
         return stream_records
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"  ⚠️  Error parsing TCX file {file_path.name}: {e}")
         return None
 
 
-def _extract_fit_record(record, start_time):
+def _extract_fit_record(record, start_time):  # pylint: disable=too-many-branches
     stream_record = {}
     timestamp = record.get("timestamp")
-    
+
     if timestamp:
         stream_record["timestamp"] = timestamp.isoformat()
         if start_time:
@@ -169,7 +196,7 @@ def parse_fit_file(file_path: Path) -> Optional[List[Dict[str, Any]]]:
 
         stream = garmin_fit_sdk.Stream.from_byte_array(content)
         decoder = garmin_fit_sdk.Decoder(stream)
-        messages, errors = decoder.read()
+        messages, _ = decoder.read()
 
         if not messages or "record_mesgs" not in messages:
             return None
@@ -187,7 +214,7 @@ def parse_fit_file(file_path: Path) -> Optional[List[Dict[str, Any]]]:
 
         return stream_records
 
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"  ⚠️  Error parsing FIT file {file_path.name}: {e}")
         return None
 
@@ -214,6 +241,38 @@ def calculate_pace(stream_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         df = df.drop(columns=["dist_diff", "time_diff", "instant_speed", "smooth_speed"])
 
     return df.to_dict("records")
+
+
+def _process_file(file_path, db, skip_existing):
+    try:
+        activity_id = int(file_path.stem.split(".")[0])
+
+        if skip_existing and db.activity_has_streams(activity_id):
+            return "skipped", 0
+
+        if file_path.suffix in [".tcx", ".gz"] and "tcx" in file_path.name:
+            stream_records = parse_tcx_file(file_path)
+        else:
+            stream_records = parse_fit_file(file_path)
+
+        if not stream_records:
+            return "error", 0
+
+        stream_records = calculate_pace(stream_records)
+
+        for record in stream_records:
+            record["activity_id"] = activity_id
+
+        batch_size = 1000
+        for i in range(0, len(stream_records), batch_size):
+            batch = stream_records[i : i + batch_size]
+            db.insert_stream_batch(batch)
+
+        return "imported", len(stream_records)
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"  ⚠️  Error processing {file_path.name}: {e}")
+        return "error", 0
 
 
 def import_activity_streams(
@@ -246,44 +305,21 @@ def import_activity_streams(
     total_records = 0
 
     for idx, file_path in enumerate(all_files):
-        try:
-            activity_id = int(file_path.stem.split(".")[0])
+        status, records_count = _process_file(file_path, db, skip_existing)
 
-            if skip_existing and db.activity_has_streams(activity_id):
-                skipped_count += 1
-                continue
-
-            if file_path.suffix in [".tcx", ".gz"] and "tcx" in file_path.name:
-                stream_records = parse_tcx_file(file_path)
-            else:
-                stream_records = parse_fit_file(file_path)
-
-            if not stream_records:
-                error_count += 1
-                continue
-
-            stream_records = calculate_pace(stream_records)
-
-            for record in stream_records:
-                record["activity_id"] = activity_id
-
-            batch_size = 1000
-            for i in range(0, len(stream_records), batch_size):
-                batch = stream_records[i : i + batch_size]
-                db.insert_stream_batch(batch)
-
+        if status == "imported":
             imported_count += 1
-            total_records += len(stream_records)
-
-            if (idx + 1) % 10 == 0:
-                print(
-                    f"  Processed {idx + 1}/{len(all_files)} files... "
-                    f"(imported: {imported_count}, skipped: {skipped_count}, errors: {error_count})"
-                )
-
-        except Exception as e:
+            total_records += records_count
+        elif status == "skipped":
+            skipped_count += 1
+        elif status == "error":
             error_count += 1
-            print(f"  ⚠️  Error processing {file_path.name}: {e}")
+
+        if (idx + 1) % 10 == 0:
+            print(
+                f"  Processed {idx + 1}/{len(all_files)} files... "
+                f"(imported: {imported_count}, skipped: {skipped_count}, errors: {error_count})"
+            )
 
     print("\n✅ Import complete!")
     print(f"  Successfully imported: {imported_count} activities ({total_records} records)")

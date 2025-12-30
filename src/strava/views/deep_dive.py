@@ -39,7 +39,7 @@ def _parse_fit(file_content):
                 )
                 alts.append(alt)
                 dists.append(record.get("distance"))
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         parsing_error = str(e)
 
     return timestamps, hrs, alts, dists, parsing_error
@@ -60,7 +60,7 @@ def _create_track_df(timestamps, hrs, alts, dists):
     def adjust(lst):
         if len(lst) < min_len:
             return lst + [None] * (min_len - len(lst))
-        elif len(lst) > min_len:
+        if len(lst) > min_len:
             return lst[:min_len]
         return lst
 
@@ -186,25 +186,99 @@ def _render_plots(track_df, zones):
         st.plotly_chart(fig_pie, use_container_width=True)
 
 
-def page_recent_activities(df, zones):
-    st.header("Deep Dive Analysis")
-    st.caption("Detailed analysis of individual activities using raw track data (TCX files).")
-
+def _get_available_activities(df):
     if "filename" not in df.columns:
         st.error("Filename column missing in data.")
-        return
+        return pd.DataFrame()
 
     mask = df["filename"].str.contains(r"\.(?:tcx|fit)", case=False, na=False) & (
         df["activity_type"] == "Run"
     )
-    available_activities = df[mask].copy().sort_values(by="activity_date", ascending=False)
+    return df[mask].copy().sort_values(by="activity_date", ascending=False)
 
+
+def _load_and_parse_file(file_path):
+    project_root = _get_project_root()
+    abs_path = os.path.join(project_root, "data", file_path)
+
+    if not os.path.exists(abs_path):
+        st.error(f"File not found: {abs_path}")
+        return None
+
+    try:
+        # Prepare temp file
+        extension = ".fit" if ".fit" in file_path.lower() else ".tcx"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as tmp:
+            if abs_path.endswith(".gz"):
+                with gzip.open(abs_path, "rb") as f:
+                    content = f.read()
+                    tmp.write(content)
+            else:
+                with open(abs_path, "rb") as f:
+                    content = f.read()
+                    tmp.write(content)
+            tmp_path = tmp.name
+
+        # Parse
+        timestamps, hrs, alts, dists, parsing_error = [], [], [], [], None
+
+        if ".fit" in extension:
+            timestamps, hrs, alts, dists, parsing_error = _parse_fit(content)
+        else:
+            timestamps, hrs, alts, dists, parsing_error = _parse_tcx(tmp_path)
+
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+        if parsing_error:
+            st.warning(f"Sort parsing errors occurred: {parsing_error}")
+
+        track_df = _create_track_df(timestamps, hrs, alts, dists)
+        if track_df.empty:
+            st.warning("No valid data points after parsing.")
+            return None
+
+        return _calculate_metrics(track_df)
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        st.error(f"Error parsing file: {e}")
+        return None
+
+
+def _display_stats(track_df):
+    c1, c2, c3 = st.columns(3)
+    avg_hr = track_df["HR"].mean()
+    max_hr = track_df["HR"].max()
+
+    total_dist = track_df["Distance"].max()
+    total_time = track_df["Elapsed Seconds"].max()
+    avg_pace_dec = ((total_time / 60) / (total_dist / 1000)) if total_dist > 0 else 0
+
+    c1.metric("Avg HR (Track)", f"{avg_hr:.0f} bpm" if pd.notna(avg_hr) else "N/A")
+    c2.metric("Max HR (Track)", f"{max_hr:.0f} bpm" if pd.notna(max_hr) else "N/A")
+
+    if avg_pace_dec > 0:
+        pm = int(avg_pace_dec)
+        ps = int((avg_pace_dec - pm) * 60)
+        c3.metric("Avg Pace", f"{pm}:{ps:02d} /km")
+    else:
+        c3.metric("Avg Pace", "N/A")
+
+
+def page_recent_activities(df, zones):
+    st.header("Deep Dive Analysis")
+    st.caption("Detailed analysis of individual activities using raw track data (TCX files).")
+
+    available_activities = _get_available_activities(df)
     if available_activities.empty:
         st.warning("No activities with TCX/FIT data found.")
         return
 
     options = available_activities.apply(
-        lambda x: f"{x['activity_date'].date()} - {x.get('activity_name', 'Unknown')} ({x['activity_type']})",
+        lambda x: (
+            f"{x['activity_date'].date()} - {x.get('activity_name', 'Unknown')} "
+            f"({x['activity_type']})"
+        ),
         axis=1,
     ).tolist()
 
@@ -221,72 +295,8 @@ def page_recent_activities(df, zones):
     if pd.notna(selected_row.get("activity_description")):
         st.markdown(f"*{selected_row['activity_description']}*")
 
-    # Load File
-    file_rel_path = selected_row["filename"]
-    project_root = _get_project_root()
-    file_path = os.path.join(project_root, "data", file_rel_path)
-
-    if not os.path.exists(file_path):
-        st.error(f"File not found: {file_path}")
-        return
-
     with st.spinner("Parsing activity data..."):
-        try:
-            # Prepare temp file
-            extension = ".fit" if ".fit" in file_rel_path.lower() else ".tcx"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as tmp:
-                if file_path.endswith(".gz"):
-                    with gzip.open(file_path, "rb") as f:
-                        content = f.read()
-                        tmp.write(content)
-                else:
-                    with open(file_path, "rb") as f:
-                        content = f.read()
-                        tmp.write(content)
-                tmp_path = tmp.name
-
-            # Parse
-            timestamps, hrs, alts, dists, parsing_error = [], [], [], [], None
-
-            if ".fit" in extension:
-                timestamps, hrs, alts, dists, parsing_error = _parse_fit(content)
-            else:
-                timestamps, hrs, alts, dists, parsing_error = _parse_tcx(tmp_path)
-
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-
-            if parsing_error:
-                st.warning(f"Sort parsing errors occurred: {parsing_error}")
-
-            track_df = _create_track_df(timestamps, hrs, alts, dists)
-
-            if track_df.empty:
-                st.warning("No valid data points after parsing.")
-                return
-
-            track_df = _calculate_metrics(track_df)
-
-            # Display Top Stats
-            c1, c2, c3 = st.columns(3)
-            avg_hr = track_df["HR"].mean()
-            max_hr = track_df["HR"].max()
-
-            total_dist = track_df["Distance"].max()
-            total_time = track_df["Elapsed Seconds"].max()
-            avg_pace_dec = ((total_time / 60) / (total_dist / 1000)) if total_dist > 0 else 0
-
-            c1.metric("Avg HR (Track)", f"{avg_hr:.0f} bpm" if pd.notna(avg_hr) else "N/A")
-            c2.metric("Max HR (Track)", f"{max_hr:.0f} bpm" if pd.notna(max_hr) else "N/A")
-
-            if avg_pace_dec > 0:
-                pm = int(avg_pace_dec)
-                ps = int((avg_pace_dec - pm) * 60)
-                c3.metric("Avg Pace", f"{pm}:{ps:02d} /km")
-            else:
-                c3.metric("Avg Pace", "N/A")
-
+        track_df = _load_and_parse_file(selected_row["filename"])
+        if track_df is not None:
+            _display_stats(track_df)
             _render_plots(track_df, zones)
-
-        except Exception as e:
-            st.error(f"Error parsing file: {e}")

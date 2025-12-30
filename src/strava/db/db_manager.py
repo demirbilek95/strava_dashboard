@@ -201,10 +201,10 @@ class DatabaseManager:
 
         # Activity types
         result = self.execute_query(
-            """SELECT activity_type, COUNT(*) as count 
-               FROM activities 
+            """SELECT activity_type, COUNT(*) as count
+               FROM activities
                WHERE activity_type IS NOT NULL
-               GROUP BY activity_type 
+               GROUP BY activity_type
                ORDER BY count DESC"""
         )
         stats["activity_types"] = {row["activity_type"]: row["count"] for row in result}
