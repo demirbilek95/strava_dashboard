@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd
 import plotly.express as px
 from datetime import timedelta
 
@@ -14,9 +13,9 @@ def page_activity_run_details(df, zones):
     # Filter for Non-Commute AND Run activities
     # Use robust check for 'activity_type'
     if "activity_type" in df.columns:
-        df_run = df[(df["commute"] == False) & (df["activity_type"] == "Run")].copy()
+        df_run = df[(~df["commute"]) & (df["activity_type"] == "Run")].copy()
     else:
-        df_run = df[df["commute"] == False].copy()  # Fallback
+        df_run = df[~df["commute"]].copy()  # Fallback
 
     if df_run.empty:
         st.warning("No running activities found.")

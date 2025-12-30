@@ -2,7 +2,6 @@
 """Master import script to initialize and populate the database."""
 
 import sys
-from pathlib import Path
 
 from db_manager import DatabaseManager
 from import_activities import import_activities_from_csv

@@ -1,7 +1,6 @@
 """Database manager for Strava activity data."""
 
 import sqlite3
-import os
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any

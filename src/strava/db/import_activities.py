@@ -1,7 +1,6 @@
 """Import activities from CSV into the database."""
 
 import pandas as pd
-import os
 from pathlib import Path
 from db_manager import DatabaseManager
 
