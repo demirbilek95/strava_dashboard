@@ -2,11 +2,10 @@
 """Master import script to initialize and populate the database."""
 
 import sys
-from pathlib import Path
 
-from db_manager import DatabaseManager
-from import_activities import import_activities_from_csv
-from import_streams import import_activity_streams
+from db_manager import DatabaseManager  # pylint: disable=import-error
+from import_activities import import_activities_from_csv  # pylint: disable=import-error
+from import_streams import import_activity_streams  # pylint: disable=import-error
 
 
 def import_all(db_path: str = None, skip_existing_streams: bool = True):
@@ -40,7 +39,7 @@ def import_all(db_path: str = None, skip_existing_streams: bool = True):
     print("=" * 60)
 
     stats = db.get_database_stats()
-    print(f"\n📊 Final Database Summary:")
+    print("\n📊 Final Database Summary:")
     print(f"  Database location: {db.db_path}")
     print(f"  Database size: {stats['database_size_mb']:.2f} MB")
     print(f"  Total activities: {stats['total_activities']}")
@@ -48,14 +47,13 @@ def import_all(db_path: str = None, skip_existing_streams: bool = True):
     print(f"  Total stream data points: {stats['total_stream_records']}")
 
     if "date_range" in stats:
-        print(f"\n📅 Date Range:")
+        print("\n📅 Date Range:")
         print(f"  From: {stats['date_range']['start']}")
         print(f"  To: {stats['date_range']['end']}")
 
     if "activity_types" in stats:
-        print(f"\n🏃 Activity Types:")
+        print("\n🏃 Activity Types:")
         for activity_type, count in stats["activity_types"].items():
-            stream_count = "N/A"
             print(f"  {activity_type}: {count} activities")
 
     print("\n💡 Next Steps:")
@@ -66,5 +64,5 @@ def import_all(db_path: str = None, skip_existing_streams: bool = True):
 
 if __name__ == "__main__":
     # Allow custom database path from command line
-    db_path = sys.argv[1] if len(sys.argv) > 1 else None
-    import_all(db_path=db_path)
+    cli_db_path = sys.argv[1] if len(sys.argv) > 1 else None
+    import_all(db_path=cli_db_path)

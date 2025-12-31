@@ -1,7 +1,6 @@
 """Database manager for Strava activity data."""
 
 import sqlite3
-import os
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
@@ -61,7 +60,7 @@ class DatabaseManager:
         if not query_path.exists():
             raise FileNotFoundError(f"Query file not found: {query_path}")
 
-        with open(query_path, "r") as f:
+        with open(query_path, "r", encoding="utf-8") as f:
             return f.read()
 
     def create_tables(self):
@@ -202,10 +201,10 @@ class DatabaseManager:
 
         # Activity types
         result = self.execute_query(
-            """SELECT activity_type, COUNT(*) as count 
-               FROM activities 
+            """SELECT activity_type, COUNT(*) as count
+               FROM activities
                WHERE activity_type IS NOT NULL
-               GROUP BY activity_type 
+               GROUP BY activity_type
                ORDER BY count DESC"""
         )
         stats["activity_types"] = {row["activity_type"]: row["count"] for row in result}
