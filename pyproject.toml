@@ -47,3 +47,8 @@ exclude = '''
   | notebooks
 )/
 '''
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "src/strava"]
+testpaths = ["tests"]
+
