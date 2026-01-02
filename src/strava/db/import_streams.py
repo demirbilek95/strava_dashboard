@@ -243,9 +243,19 @@ def calculate_pace(stream_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return df.to_dict("records")
 
 
-def _process_file(file_path, db, skip_existing):
+def _process_file(file_path, db, mapping, skip_existing):
     try:
-        activity_id = int(file_path.stem.split(".")[0])
+        # Use database mapping to get the correct activity_id
+        # The database filename looks like 'activities/file.fit.gz'
+        db_filename = f"activities/{file_path.name}"
+        activity_id = mapping.get(db_filename)
+
+        if not activity_id:
+            # Fallback to pure filename if not in DB (sometimes happens with raw imports)
+            try:
+                activity_id = int(file_path.stem.split(".")[0])
+            except (ValueError, IndexError):
+                return "error", 0
 
         if skip_existing and db.activity_has_streams(activity_id):
             return "skipped", 0
@@ -292,6 +302,12 @@ def import_activity_streams(
 
     db = DatabaseManager(db_path)
 
+    # Get mapping of filename -> activity_id from database
+    print("🔍 Fetching activity mapping from database...")
+    activities = db.execute_query("SELECT filename, activity_id FROM activities")
+    filename_mapping = {row["filename"]: row["activity_id"] for row in activities}
+    print(f"✅ Found {len(filename_mapping)} activities in database.")
+
     tcx_files = list(activities_dir.glob("*.tcx")) + list(activities_dir.glob("*.tcx.gz"))
     fit_files = list(activities_dir.glob("*.fit")) + list(activities_dir.glob("*.fit.gz"))
     all_files = tcx_files + fit_files
@@ -305,7 +321,7 @@ def import_activity_streams(
     total_records = 0
 
     for idx, file_path in enumerate(all_files):
-        status, records_count = _process_file(file_path, db, skip_existing)
+        status, records_count = _process_file(file_path, db, filename_mapping, skip_existing)
 
         if status == "imported":
             imported_count += 1
