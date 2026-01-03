@@ -316,125 +316,68 @@ def _render_plots(track_df, zones):
 
 
 def _render_pace_bar_chart(df, label_col, title):
-    """Render pace bar chart with bars growing from bottom to top, Strava-style."""
+    """Render Strava-style pace bar chart (fast at top, slow at bottom)."""
     if df.empty:
         return
 
-    # Format pace for labels
+    # ---- helpers ----
     def fmt(p):
-        if pd.isna(p) or p == 0:
+        if pd.isna(p) or p <= 0:
             return "N/A"
-        return f"{int(p)}:{int((p % 1) * 60):02d}"
+        m = int(p)
+        s = int((p - m) * 60)
+        return f"{m}:{s:02d}"
 
     df = df.copy()
-    if "Pace_Str" not in df.columns:
-        df["Pace_Str"] = df["Pace"].apply(fmt)
+    df = df[df["Pace"] > 0]
 
-    # Calculate statistics
-    valid_paces = df[df["Pace"] > 0]["Pace"]
-    if valid_paces.empty:
+    if df.empty:
         st.write("No valid pace data available.")
         return
 
-    min_pace = valid_paces.min()  # Fastest (lowest number)
-    max_pace = valid_paces.max()  # Slowest (highest number)
-    avg_pace = valid_paces.mean()  # Average
+    df["Pace_Str"] = df["Pace"].apply(fmt)
 
-    # Calculate y-axis range
-    y_max = min(10.0, max_pace + 0.5)  # Cap at 10:00/km
-    y_min = max(3.0, min_pace - 0.5)  # Floor at 3:00/km
+    # ---- stats ----
+    min_pace = df["Pace"].min()   # fastest
+    max_pace = df["Pace"].max()   # slowest
 
-    # Create figure with bar chart
-    fig_bar = go.Figure()
+    y_min = max(3.0, min_pace - 0.5)
+    y_max = min(10.0, max_pace + 0.5)
 
-    # Add bars
-    fig_bar.add_trace(
+    # ---- bar logic (IMPORTANT PART) ----
+    baseline = y_max
+
+    fig = go.Figure()
+
+    fig.add_trace(
         go.Bar(
             x=df[label_col],
-            y=df["Pace"],
+            y=baseline - df["Pace"],   # bar height
+            base=df["Pace"],           # bar starts at pace
             text=df["Pace_Str"],
-            textposition="outside",
-            marker=dict(
-                color="#5DADE2",  # Strava-style light blue
-                line=dict(color="white", width=2),
-            ),
-            name="Pace",
+            textposition="auto",
             showlegend=False,
         )
     )
 
-    # Add average pace line (dashed)
-    fig_bar.add_trace(
-        go.Scatter(
-            x=df[label_col],
-            y=[avg_pace] * len(df),
-            mode="lines",
-            line=dict(color="#3498DB", width=2, dash="dash"),
-            name=f"Average: {fmt(avg_pace)}/km",
-            showlegend=False,
-        )
-    )
-
-    # Create annotations for legend (right side)
-    annotations = [
-        dict(
-            text=f"<b>Fastest</b><br>{fmt(min_pace)}/km",
-            xref="paper",
-            yref="paper",
-            x=1.12,
-            y=0.95,
-            showarrow=False,
-            xanchor="left",
-            align="left",
-            font=dict(size=11),
-        ),
-        dict(
-            text=f"<b>Average</b><br>{fmt(avg_pace)}/km",
-            xref="paper",
-            yref="paper",
-            x=1.12,
-            y=0.75,
-            showarrow=False,
-            xanchor="left",
-            align="left",
-            font=dict(size=11),
-        ),
-        dict(
-            text=f"<b>Slowest</b><br>{fmt(max_pace)}/km",
-            xref="paper",
-            yref="paper",
-            x=1.12,
-            y=0.55,
-            showarrow=False,
-            xanchor="left",
-            align="left",
-            font=dict(size=11),
-        ),
-    ]
-
-    # Create custom y-axis tick labels (like Strava: 3:00/km, 4:00/km, etc.)
-    tick_start = int(y_min)
-    tick_end = int(y_max) + 1
-    tick_vals = list(range(tick_start, tick_end))
+    # ---- y-axis ticks ----
+    tick_vals = list(range(int(y_min), int(y_max) + 1))
     tick_texts = [f"{t}:00/km" for t in tick_vals]
 
-    fig_bar.update_layout(
+    fig.update_layout(
         title=title,
         xaxis_title=label_col,
-        yaxis_title="",  # Remove y-axis title since tick labels are self-explanatory
         yaxis=dict(
-            autorange="reversed",  # Fast pace (low value) at top
-            range=[y_max, y_min],
+            autorange="reversed",
             tickmode="array",
             tickvals=tick_vals,
             ticktext=tick_texts,
         ),
-        annotations=annotations,
-        margin=dict(r=150),  # Extra margin for legend
+        margin=dict(r=140, b=150),
         height=400,
     )
 
-    st.plotly_chart(fig_bar, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _render_splits_table(track_df):
@@ -467,7 +410,7 @@ def _render_splits_table(track_df):
 
 def _get_available_activities(df):
     if "filename" not in df.columns:
-        st.error("Filename column missing in data.")
+        st.error("Filename column missing in data.")    
         return pd.DataFrame()
 
     mask = df["filename"].str.contains(r"\.(?:tcx|fit)", case=False, na=False) & (
