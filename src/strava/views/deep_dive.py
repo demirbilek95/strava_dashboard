@@ -7,6 +7,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import tcxparser
 import garmin_fit_sdk
+import folium
+from streamlit_folium import folium_static
 
 
 def _get_project_root():
@@ -19,6 +21,8 @@ def _parse_fit(file_content):
     hrs = []
     alts = []
     dists = []
+    lats = []
+    lons = []
     parsing_error = None
 
     try:
@@ -40,10 +44,16 @@ def _parse_fit(file_content):
                 )
                 alts.append(alt)
                 dists.append(record.get("distance"))
+                
+                # GPS extraction (FIT uses semicircles)
+                lat = record.get("position_lat")
+                lon = record.get("position_long")
+                lats.append(lat)
+                lons.append(lon)
     except Exception as e:  # pylint: disable=broad-exception-caught
         parsing_error = str(e)
 
-    return timestamps, hrs, alts, dists, parsing_error
+    return timestamps, hrs, alts, dists, lats, lons, parsing_error
 
 
 def _parse_tcx(tmp_path):
@@ -51,7 +61,7 @@ def _parse_tcx(tmp_path):
     return (tcx.time_values(), tcx.hr_values(), tcx.altitude_points(), tcx.distance_values(), None)
 
 
-def _create_track_df(timestamps, hrs, alts, dists):
+def _create_track_df(timestamps, hrs, alts, dists, lats=None, lons=None):
     if not timestamps:
         return pd.DataFrame()
 
@@ -75,6 +85,8 @@ def _create_track_df(timestamps, hrs, alts, dists):
             "HR": hrs,
             "Altitude": alts,
             "Distance": dists,
+            "latitude": lats if lats else [None] * min_len,
+            "longitude": lons if lons else [None] * min_len,
         }
     )
 
@@ -86,6 +98,22 @@ def _create_track_df(timestamps, hrs, alts, dists):
     track_df["Distance"] = track_df["Distance"].ffill()
     track_df["Altitude"] = track_df["Altitude"].ffill()
     track_df["HR"] = track_df["HR"].ffill()
+
+    track_df["HR"] = track_df["HR"].ffill()
+
+    # Convert semicircles to degrees if needed for simple lat/lon columns
+    def to_degrees(val):
+        if pd.isna(val):
+            return None
+        # Heuristic: if value > 180, it's likely semicircles
+        if abs(val) > 180:
+            return val * (180.0 / 2**31)
+        return val
+
+    if "latitude" in track_df.columns:
+        track_df["latitude"] = track_df["latitude"].apply(to_degrees)
+    if "longitude" in track_df.columns:
+        track_df["longitude"] = track_df["longitude"].apply(to_degrees)
 
     track_df = track_df.dropna(subset=["Time"])
     return track_df
@@ -262,14 +290,59 @@ def _render_hr_analysis(track_df, zones):
         c[5].markdown(bar_html, unsafe_allow_html=True)
 
 
-def _render_plots(track_df, zones):
+def _render_plots(track_df, zones, pace_zones=None):
     st.subheader("Performance Analysis")
+    st.caption("Pace calculated using elapsed time")
 
     # Triple-stacked synchronized plots: Pace, Cadence, HR
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05)
 
-    # 1. Pace (Top) - Standard ordering (Bottom-to-Top)
+    # 1. Pace (Top) - Standard ordering (Bottom-to-Top) with zone colors
     pace_df = track_df[(track_df["Pace_Decimal"] < 12) & (track_df["Pace_Decimal"] > 3)].copy()
+    
+    # Add pace zone colors as background bands
+    # Zone shading removed from Pace plot as requested
+    
+    # Add HR zone colors as background bands for HR plot
+    hr_zones = zones  # (z1, z2, z3, z4)
+    # Define 5 zones: Z1 (<z1), Z2 (z1-z2), Z3 (z2-z3), Z4 (z3-z4), Z5 (>z4)
+    hr_zone_defs = [
+        (0, hr_zones[0]),          # Z1
+        (hr_zones[0], hr_zones[1]), # Z2
+        (hr_zones[1], hr_zones[2]), # Z3
+        (hr_zones[2], hr_zones[3]), # Z4
+        (hr_zones[3], 220)         # Z5 (cap at 220 or max HR)
+    ]
+    hr_zone_colors = ["#BDBDBD", "#64B5F6", "#81C784", "#FFB74D", "#E57373"]
+    hr_zone_names = ["Z1", "Z2", "Z3", "Z4", "Z5"]
+
+    for i, (z_min, z_max) in enumerate(hr_zone_defs):
+        fig.add_shape(
+            type="rect",
+            xref="x", yref="y",
+            x0=track_df["Elapsed Seconds"].min(),
+            x1=track_df["Elapsed Seconds"].max(),
+            y0=z_min,
+            y1=z_max,
+            fillcolor=hr_zone_colors[i],
+            opacity=0.2,
+            layer="below",
+            line_width=0,
+            row=3, col=1
+        )
+        # Add zone label
+        fig.add_annotation(
+            xref="x", yref="y",
+            x=track_df["Elapsed Seconds"].min(),  # Label on Left
+            y=(z_min + z_max) / 2, # Center of zone
+            text=hr_zone_names[i],
+            showarrow=False,
+            xanchor="left",
+            font=dict(size=10, color="black"), # Black text for visibility on light/colored bg
+            row=3, col=1
+        )
+
+    
     fig.add_trace(
         go.Scatter(
             x=pace_df["Elapsed Seconds"],
@@ -315,7 +388,7 @@ def _render_plots(track_df, zones):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def _render_pace_bar_chart(df, label_col, title):
+def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
     """Render Strava-style pace bar chart (fast at top, slow at bottom)."""
     if df.empty:
         return
@@ -365,7 +438,7 @@ def _render_pace_bar_chart(df, label_col, title):
     tick_texts = [f"{t}:00/km" for t in tick_vals]
 
     fig.update_layout(
-        title=title,
+        title=f"{title} (based on {time_basis})",
         xaxis_title=label_col,
         yaxis=dict(
             autorange="reversed",
@@ -383,6 +456,7 @@ def _render_pace_bar_chart(df, label_col, title):
 def _render_splits_table(track_df):
     """Render splits table with consistent data."""
     st.subheader("Splits")
+    st.caption("Pace calculated using elapsed time")
     splits = _calculate_splits(track_df)
 
     if splits.empty:
@@ -422,6 +496,7 @@ def _get_available_activities(df):
 def _parse_fit_messages(content):
     """Worker to parse fit messages to reduce complexity."""
     timestamps, hrs, alts, dists, cads = [], [], [], [], []
+    lats, lons = [], []
     laps = []
 
     try:
@@ -436,28 +511,39 @@ def _parse_fit_messages(content):
                 alt = record.get("enhanced_altitude") or record.get("altitude")
                 alts.append(alt)
                 dists.append(record.get("distance"))
-                cads.append(record.get("cadence"))
+                # FIT files store cadence for ONE leg only, double it to match Strava
+                raw_cad = record.get("cadence")
+                cads.append(raw_cad * 2 if raw_cad is not None else None)
+                
+                # GPS extraction
+                lats.append(record.get("position_lat"))
+                lons.append(record.get("position_long"))
 
         if "lap_mesgs" in messages:
             for i, lap in enumerate(messages["lap_mesgs"]):
+                # Use elapsed time consistently (total_elapsed_time) to match splits
+                raw_cadence = lap.get("avg_combined_cadence") or lap.get("avg_cadence")
+                # Double cadence to match Strava (FIT stores one leg only)
+                display_cadence = raw_cadence * 2 if raw_cadence is not None else None
+                
                 laps.append(
                     {
                         "Lap": i + 1,
                         "Distance": (lap.get("total_distance", 0) / 1000),
                         "Time": (
-                            lap.get("total_timer_time")
+                            lap.get("total_elapsed_time")
+                            or lap.get("total_timer_time")
                             or lap.get("total_moving_time")
-                            or lap.get("total_elapsed_time")
                         ),
                         "Pace": 0,
                         "Avg HR": lap.get("avg_heart_rate"),
-                        "Cadence": lap.get("avg_combined_cadence") or lap.get("avg_cadence"),
+                        "Cadence": display_cadence,
                     }
                 )
     except Exception as e:  # pylint: disable=broad-exception-caught
         st.error(f"FIT parsing error: {e}")
 
-    return timestamps, hrs, alts, dists, cads, laps
+    return timestamps, hrs, alts, dists, cads, lats, lons, laps
 
 
 def _load_and_parse_file(file_path):
@@ -473,9 +559,9 @@ def _load_and_parse_file(file_path):
         content = _read_file_content(abs_path)
 
         if ".fit" in extension:
-            timestamps, hrs, alts, dists, cads, laps = _parse_fit_messages(content)
+            timestamps, hrs, alts, dists, cads, lats, lons, laps = _parse_fit_messages(content)
             if timestamps:
-                track_df = _create_track_df(timestamps, hrs, alts, dists)
+                track_df = _create_track_df(timestamps, hrs, alts, dists, lats, lons)
                 if not track_df.empty and len(cads) == len(track_df):
                     track_df["cadence"] = cads
                     track_df["cadence"] = track_df["cadence"].ffill()
@@ -487,16 +573,17 @@ def _load_and_parse_file(file_path):
             tmp_path = tmp.name
 
         if ".fit" in extension:
-            timestamps, hrs, alts, dists, _ = _parse_fit(content)
+            timestamps, hrs, alts, dists, lats, lons, _ = _parse_fit(content)
         else:
             timestamps, hrs, alts, dists, _ = _parse_tcx(tmp_path)
+            lats, lons = [], []  # TODO: Implement TCX GPS extraction if needed
             # Try to extract cadence from TCX if available
             cads = []
 
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-        track_df = _create_track_df(timestamps, hrs, alts, dists)
+        track_df = _create_track_df(timestamps, hrs, alts, dists, lats, lons)
         if track_df is not None and not track_df.empty:
             if cads and len(cads) == len(track_df):
                 track_df["cadence"] = cads
@@ -572,6 +659,58 @@ def _display_stats(track_df, selected_row):
         col4.metric("Avg Cadence", "N/A")
 
 
+def _render_route_map(track_df, activity_name):
+    """Render GPS route map using folium."""
+    st.subheader("Route Map")
+    
+    # Get GPS coordinates from database stream
+    if "latitude" not in track_df.columns or "longitude" not in track_df.columns:
+        st.warning("No GPS data available for this activity.")
+        return
+    
+    # Filter out null coordinates
+    gps_df = track_df.dropna(subset=["latitude", "longitude"])
+    
+    if gps_df.empty:
+        st.warning("No valid GPS coordinates found.")
+        return
+    
+    # Create map centered on the route
+    center_lat = gps_df["latitude"].mean()
+    center_lon = gps_df["longitude"].mean()
+    
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+    
+    # Create route coordinates
+    coordinates = list(zip(gps_df["latitude"], gps_df["longitude"]))
+    
+    # Add route line
+    folium.PolyLine(
+        coordinates,
+        color="blue",
+        weight=3,
+        opacity=0.8
+    ).add_to(m)
+    
+    # Add start marker (green)
+    folium.Marker(
+        coordinates[0],
+        popup="Start",
+        icon=folium.Icon(color="green", icon="play")
+    ).add_to(m)
+    
+    # Add finish marker (red)
+    folium.Marker(
+        coordinates[-1],
+        popup="Finish",
+        icon=folium.Icon(color="red", icon="stop")
+    ).add_to(m)
+    
+    # Render the map
+    # Use a large width to fill the container (standard Streamlit wide mode is ~1200px)
+    folium_static(m, width=1600, height=500)
+
+
 def page_recent_activities(df, zones):
     st.header("Deep Dive Analysis")
 
@@ -605,6 +744,8 @@ def page_recent_activities(df, zones):
                 "altitude": "Altitude",
                 "distance": "Distance",
                 "timestamp": "Time",
+                "latitude": "latitude",  # Keep as is for GPS mapping
+                "longitude": "longitude",  # Keep as is for GPS mapping
             }
             track_df = track_df.rename(columns=rename_map)
             track_df["Time"] = pd.to_datetime(track_df["Time"])
@@ -620,29 +761,34 @@ def page_recent_activities(df, zones):
         if track_df is not None:
             _display_stats(track_df, selected_row)
 
-            # Layout like Strava
-            tab1, tab2, tab3 = st.tabs(["Analysis", "Splits", "Laps"])
+            # Define pace zones (Easy, Moderate, Tempo, Threshold, Fast)
+            # TODO: Make these configurable in sidebar
+            pace_zones = [(3.0, 5.0), (5.0, 5.5), (5.5, 6.0), (6.0, 6.5), (6.5, 12.0)]
+
+            # Layout like Strava with Route Map tab
+            tab1, tab2, tab3, tab4 = st.tabs(["Analysis", "Splits", "Laps", "Route Map"])
 
             with tab1:
-                _render_plots(track_df, zones)
+                _render_plots(track_df, zones, pace_zones)
                 _render_hr_analysis(track_df, zones)
 
             with tab2:
                 st.info("Kilometer splits (Auto-calculated)")
                 splits = _calculate_splits(track_df)
                 if not splits.empty:
-                    _render_pace_bar_chart(splits, "KM", "Pace per Kilometer")
+                    _render_pace_bar_chart(splits, "KM", "Pace per Kilometer", "Elapsed Time")
                     _render_splits_table(track_df)
 
             with tab3:
                 if laps_df is not None and not laps_df.empty:
                     st.info("Device Recorded Laps")
+                    st.caption("Pace calculated using elapsed time")
 
                     l_display = laps_df.copy()
                     l_display["Pace"] = (l_display["Time"] / l_display["Distance"]) / 60
 
                     # Render bar chart before formatting columns to strings
-                    _render_pace_bar_chart(l_display, "Lap", "Pace per Lap")
+                    _render_pace_bar_chart(l_display, "Lap", "Pace per Lap", "Elapsed Time")
 
                     # Format for display
                     l_display["Pace"] = l_display["Pace"].apply(
@@ -661,3 +807,6 @@ def page_recent_activities(df, zones):
                 else:
                     st.info("No device laps found. Showing 1km splits.")
                     _render_splits_table(track_df)
+            
+            with tab4:
+                _render_route_map(track_df, selected_row.get("activity_name", "Activity"))
