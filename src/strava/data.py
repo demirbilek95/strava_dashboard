@@ -72,7 +72,7 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
             return pd.DataFrame()
 
         db = DatabaseManager(str(db_path))
-        stream_records = db.get_activity_stream(activity_id)
+        stream_records = db.get_activity_stream(int(activity_id))
 
         if not stream_records:
             return pd.DataFrame()

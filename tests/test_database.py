@@ -147,3 +147,33 @@ def test_database_stats(db_manager):
     assert stats["total_activities"] == 2
     assert "Run" in stats["activity_types"]
     assert "Ride" in stats["activity_types"]
+def test_get_activities_with_streams(db_manager):
+    """Test get_activities_with_streams query."""
+    activity_id = 999
+    db_manager.insert_activity(
+        {
+            "activity_id": activity_id,
+            "activity_name": "Streamed Run",
+            "activity_type": "Run",
+            "activity_date": "2023-01-01",
+        }
+    )
+    db_manager.insert_stream_batch(
+        [
+            {
+                "activity_id": activity_id,
+                "timestamp": "2023-01-01T10:00:00Z",
+                "heart_rate": 150,
+            }
+        ]
+    )
+
+    # Use the specific method or manual query execution
+    query = db_manager.load_query("get_activities_with_streams")
+    rows = db_manager.execute_query(query)
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["activity_id"] == activity_id
+    assert row["activity_type"] == "Run"
+    assert "activity_date" in row.keys()

@@ -454,26 +454,36 @@ def page_recent_activities(df, zones):
     selected_row = available_activities.iloc[idx]
 
     with st.spinner("Loading activity data..."):
-        track_df = get_activity_stream(selected_row["activity_id"])
-        laps_df = pd.DataFrame()
+        try:
+            track_df = get_activity_stream(selected_row["activity_id"])
+            laps_df = pd.DataFrame()
 
-        if not track_df.empty:
-            # Rename columns to match existing logic
-            rename_map = {
-                "heart_rate": "HR",
-                "altitude": "Altitude",
-                "distance": "Distance",
-                "timestamp": "Time",
-                "latitude": "latitude",  # Keep as is for GPS mapping
-                "longitude": "longitude",  # Keep as is for GPS mapping
-            }
-            track_df = track_df.rename(columns=rename_map)
-            # Ensure proper types
-            if "Time" in track_df.columns:
-                track_df["Time"] = pd.to_datetime(track_df["Time"])
-            track_df = _calculate_metrics(track_df)
+            if not track_df.empty:
+                # Rename columns to match existing logic
+                rename_map = {
+                    "heart_rate": "HR",
+                    "altitude": "Altitude",
+                    "distance": "Distance",
+                    "timestamp": "Time",
+                    "latitude": "latitude",  # Keep as is for GPS mapping
+                    "longitude": "longitude",  # Keep as is for GPS mapping
+                }
+                track_df = track_df.rename(columns=rename_map)
+                # Ensure proper types
+                if "Time" in track_df.columns:
+                    track_df["Time"] = pd.to_datetime(track_df["Time"])
+                
+                track_df = _calculate_metrics(track_df)
+                
+                if track_df is None or track_df.empty:
+                    st.error("Processing failed: `_calculate_metrics` returned empty data.")
+                    return
 
-            _display_stats(track_df, selected_row)
-            _render_deep_dive_tabs(track_df, laps_df, zones)
-        else:
-            st.error("Failed to load detailed stream data for this activity.")
+                _display_stats(track_df, selected_row)
+                _render_deep_dive_tabs(track_df, laps_df, zones)
+            else:
+                st.error(f"No stream records found in database for activity {selected_row['activity_id']}.")
+                st.info("Try refreshing data from Strava if this is a new activity.")
+        except Exception as e:
+            st.error(f"Error loading stream data: {e}")
+            st.exception(e)
