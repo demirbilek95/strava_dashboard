@@ -19,35 +19,39 @@ def show_welcome_page():
     st.markdown(
         """
     This application allows you to analyze your Strava activities in depth.
-    To get started, please enter your Strava Athlete ID to fetch your data.
+    To get started, follow these steps:
+    
+    1. **Authorize the App**: Click the button below to go to Strava and grant permissions.
+    2. **Copy the Code**: After authorizing, you will be redirected to `localhost`. Copy the `code` parameter from the address bar.
+    3. **Connect**: Paste the code below and click 'Complete Connection'.
     """
     )
 
-    athlete_id = st.text_input("Strava Athlete ID", placeholder="e.g. 12345678")
+    try:
+        api = StravaAPI()
+        auth_url = api.get_authorization_url()
+        st.link_button("🔑 Authorize Strava", auth_url, type="primary")
+    except Exception as e:
+        st.error(f"Failed to generate authorization URL: {e}")
+        st.info("Make sure `STRAVA_CLIENT_ID` is set in your `.env` file.")
 
-    if st.button("Connect & Import Data"):
-        if not athlete_id:
-            st.error("Please enter an Athlete ID.")
+    st.divider()
+    
+    auth_code = st.text_input("Step 3: Paste Authorization Code here", placeholder="e.g. a1b2c3d4...")
+    
+    if st.button("Complete Connection & Import Data"):
+        if not auth_code:
+            st.error("Please paste the authorization code from the Strava redirect URL.")
             return
 
         try:
-            # Initialize API and DB
+            # Initialize API
             api = StravaAPI()
-
-            # Verify Athlete
-            try:
-                athlete = api.get_athlete()
-                if str(athlete.get("id")) != str(athlete_id):
-                    st.warning(
-                        f"Authenticated as {athlete.get('firstname')} {athlete.get('lastname')} (ID: {athlete.get('id')}), but you entered {athlete_id}. Proceeding with authenticated user..."
-                    )
-                else:
-                    st.success(
-                        f"Verified athlete: {athlete.get('firstname')} {athlete.get('lastname')}"
-                    )
-            except Exception as e:
-                st.error(f"Failed to authenticate with Strava: {e}")
-                return
+            
+            with st.spinner("Exchanging code for tokens..."):
+                api.exchange_code_for_tokens(auth_code)
+            
+            st.success("Successfully connected to Strava!")
 
             # Setup Database
             db = DatabaseManager()
@@ -73,11 +77,18 @@ def show_welcome_page():
 
         except Exception as e:
             st.error(f"An error occurred during setup: {e}")
+            if "401" in str(e):
+                st.error("The authorization code might be expired or invalid. Please try the 'Authorize' step again.")
 
 
 def main():
     # Check if database exists and has data
     db = DatabaseManager()
+
+    # Check for forced re-authorization
+    if st.session_state.get("force_reauth"):
+        show_welcome_page()
+        return
 
     # Check if tables exist first
     try:
@@ -118,6 +129,13 @@ def main():
             st.rerun()
         except Exception as e:
             st.sidebar.error(f"Update failed: {e}")
+            if "401" in str(e) or "missing" in str(e).lower():
+                st.sidebar.warning("Permissions might be missing or expired.")
+                if st.sidebar.button("🔑 Re-authorize Strava"):
+                    # Clear data or just show welcome? Let's show welcome.
+                    # We can use a session state to force welcome page
+                    st.session_state["force_reauth"] = True
+                    st.rerun()
 
     # Global Zone Settings
     st.sidebar.markdown("---")
