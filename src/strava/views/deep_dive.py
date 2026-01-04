@@ -169,7 +169,7 @@ def _render_plots(track_df, zones):
     fig.update_yaxes(title_text="Heart Rate (bpm)", row=3, col=1)
 
     fig.update_layout(height=700, hovermode="x unified", showlegend=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
 
 def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
@@ -230,11 +230,10 @@ def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
             "tickvals": tick_vals,
             "ticktext": tick_texts,
         },
-        margin={"r": 140, "b": 150},
         height=400,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
 
 def _render_splits_table(track_df):
@@ -263,7 +262,7 @@ def _render_splits_table(track_df):
         )
     display_splits["Distance"] = display_splits["Distance"].apply(lambda x: f"{x:.2f} km")
 
-    st.dataframe(display_splits, use_container_width=True)
+    st.dataframe(display_splits, width="stretch")
 
 
 def _get_available_activities(df):
@@ -381,7 +380,7 @@ def _render_deep_dive_tabs(track_df, laps_df, zones):
                 lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
             )
 
-            st.dataframe(l_display, use_container_width=True)
+            st.dataframe(l_display, width="stretch")
         else:
             st.info("No device laps found. Showing 1km splits.")
             _render_splits_table(track_df)
