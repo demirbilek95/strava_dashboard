@@ -1,12 +1,14 @@
+import sys
+from unittest.mock import MagicMock, patch
 import pytest
 import pandas as pd
-from unittest.mock import MagicMock, patch
-import sys
 
 # Mock streamlit before importing strava.data to disable caching and UI errors
 mock_st = MagicMock()
 mock_st.cache_data = lambda func: func
 sys.modules["streamlit"] = mock_st
+
+# pylint: disable=redefined-outer-name, unused-argument, wrong-import-position
 
 from strava.data import load_data, get_activity_stream
 

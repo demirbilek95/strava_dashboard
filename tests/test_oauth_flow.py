@@ -8,7 +8,7 @@ class TestStravaOAuth(unittest.TestCase):
     def setUp(self):
         # Create a dummy .env file for testing
         self.env_path = Path(".env.test")
-        with open(self.env_path, "w") as f:
+        with open(self.env_path, "w", encoding="utf-8") as f:
             f.write("STRAVA_CLIENT_ID=test_id\n")
             f.write("STRAVA_CLIENT_SECRET=test_secret\n")
             f.write("STRAVA_ACCESS_TOKEN=old_access\n")
@@ -36,10 +36,10 @@ class TestStravaOAuth(unittest.TestCase):
         if self.env_path.exists():
             self.env_path.unlink()
 
-    def mock_open(self, path, mode="r", *args, **kwargs):
+    def mock_open(self, path, *args, **kwargs):
         if str(path) == ".env":
-            return self.real_open(self.env_path, mode, *args, **kwargs)
-        return self.real_open(path, mode, *args, **kwargs)
+            return self.real_open(self.env_path, *args, **kwargs)
+        return self.real_open(path, *args, **kwargs)
 
     def mock_getenv(self, key, default=None):
         env = {
@@ -70,7 +70,7 @@ class TestStravaOAuth(unittest.TestCase):
         self.assertEqual(api.refresh_token, "new_refresh")
 
         # Verify .env.test was updated
-        with open(self.env_path, "r") as f:
+        with open(self.env_path, "r", encoding="utf-8") as f:
             content = f.read()
             self.assertIn("STRAVA_ACCESS_TOKEN=new_access", content)
             self.assertIn("STRAVA_REFRESH_TOKEN=new_refresh", content)

@@ -1,8 +1,7 @@
-import pandas as pd
-
-from unittest.mock import MagicMock
-import sys
 import os
+import sys
+from unittest.mock import MagicMock
+import pandas as pd
 
 # Add src to path
 sys.path.append(os.path.abspath("src"))
@@ -11,7 +10,8 @@ sys.path.append(os.path.abspath("src"))
 sys.modules["streamlit"] = MagicMock()
 sys.modules["streamlit_folium"] = MagicMock()
 
-from strava.views.deep_dive import _render_plots
+# pylint: disable=wrong-import-position
+from strava.views.deep_dive import _render_plots, _render_route_map
 
 
 def test_render_plots():
@@ -82,7 +82,6 @@ def test_render_plots():
 
 def test_render_route_map():
     print("Testing _render_route_map (Map Width)...")
-    from strava.views.deep_dive import _render_route_map
 
     # Mock DF with lat/lon
     df = pd.DataFrame(
@@ -101,7 +100,7 @@ def test_render_route_map():
     folium_static_mock = sys.modules["streamlit_folium"].folium_static
 
     # Get kwargs
-    args, kwargs = folium_static_mock.call_args
+    _, kwargs = folium_static_mock.call_args
 
     width = kwargs.get("width")
     print(f"Map width used: {width}")
@@ -117,7 +116,7 @@ if __name__ == "__main__":
         print("\nAll tests passed!")
     except AssertionError as e:
         print(f"\n❌ Test failed: {e}")
-        exit(1)
-    except Exception as e:
+        sys.exit(1)
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"\n❌ Error: {e}")
-        exit(1)
+        sys.exit(1)

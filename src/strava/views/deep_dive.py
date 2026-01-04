@@ -479,9 +479,7 @@ def page_recent_activities(_, zones):
                 _display_stats(track_df, selected_row)
                 _render_deep_dive_tabs(track_df, laps_df, zones)
             else:
-                st.error(
-                    f"No stream records found for activity {selected_row['activity_id']}."
-                )
+                st.error(f"No stream records found for activity {selected_row['activity_id']}.")
                 st.info("Try refreshing data from Strava if this is a new activity.")
         except Exception as exc:  # pylint: disable=broad-exception-caught
             st.error(f"Error loading stream data: {exc}")
