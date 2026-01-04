@@ -81,33 +81,6 @@ def _render_plots(track_df, zones):
     # 1. Pace (Top) - Standard ordering (Bottom-to-Top) with zone colors
     pace_df = track_df[(track_df["Pace_Decimal"] < 12) & (track_df["Pace_Decimal"] > 3)].copy()
 
-    # Add pace zone colors as background bands
-    # Zone shading removed from Pace plot as requested
-
-    # Add HR zone colors as background bands for HR plot
-    hr_zones = zones  # (z1, z2, z3, z4)
-    # Define 5 zones: Z1 (<z1), Z2 (z1-z2), Z3 (z2-z3), Z4 (z3-z4), Z5 (>z4)
-    hr_zone_defs = [
-        (0, hr_zones[0]),  # Z1
-        (hr_zones[0], hr_zones[1]),  # Z2
-        (hr_zones[1], hr_zones[2]),  # Z3
-        (hr_zones[2], hr_zones[3]),  # Z4
-        (hr_zones[3], 220),  # Z5 (cap at 220 or max HR)
-    ]
-    hr_zone_colors = ["#BDBDBD", "#64B5F6", "#81C784", "#FFB74D", "#E57373"]
-    hr_zone_names = ["Z1", "Z2", "Z3", "Z4", "Z5"]
-    st.subheader("Performance Analysis")
-    st.caption("Pace calculated using elapsed time")
-
-    # Triple-stacked synchronized plots: Pace, Cadence, HR
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05)
-
-    # 1. Pace (Top) - Standard ordering (Bottom-to-Top) with zone colors
-    pace_df = track_df[(track_df["Pace_Decimal"] < 12) & (track_df["Pace_Decimal"] > 3)].copy()
-
-    # Add pace zone colors as background bands
-    # Zone shading removed from Pace plot as requested
-
     # Add HR zone colors as background bands for HR plot
     hr_zones = zones  # (z1, z2, z3, z4)
     # Define 5 zones: Z1 (<z1), Z2 (z1-z2), Z3 (z2-z3), Z4 (z3-z4), Z5 (>z4)
@@ -121,18 +94,6 @@ def _render_plots(track_df, zones):
     hr_zone_colors = ["#BDBDBD", "#64B5F6", "#81C784", "#FFB74D", "#E57373"]
     hr_zone_names = ["Z1", "Z2", "Z3", "Z4", "Z5"]
 
-    for i, (z_min, z_max) in enumerate(hr_zone_defs):
-        fig.add_shape(
-            type="rect",
-            xref="x",
-            yref="y",
-            x0=track_df["Elapsed Seconds"].min(),
-            x1=track_df["Elapsed Seconds"].max(),
-            y0=z_min,
-            y1=z_max,
-            fillcolor=hr_zone_colors[i],
-            opacity=0.2,
-            layer="below",
     for i, (z_min, z_max) in enumerate(hr_zone_defs):
         fig.add_shape(
             type="rect",
@@ -161,35 +122,7 @@ def _render_plots(track_df, zones):
             font={"size": 10, "color": "black"},  # Black text for visibility on light/colored bg
             row=3,
             col=1,
-            row=3,
-            col=1,
         )
-        # Add zone label
-        fig.add_annotation(
-            xref="x",
-            yref="y",
-            x=track_df["Elapsed Seconds"].min(),  # Label on Left
-            y=(z_min + z_max) / 2,  # Center of zone
-            text=hr_zone_names[i],
-            showarrow=False,
-            xanchor="left",
-            font={"size": 10, "color": "black"},  # Black text for visibility on light/colored bg
-            row=3,
-            col=1,
-        )
-
-    fig.add_trace(
-        go.Scatter(
-            x=pace_df["Elapsed Seconds"],
-            y=pace_df["Pace_Decimal"],
-            name="Pace",
-            line={"color": "blue"},
-        ),
-        row=1,
-        col=1,
-    )
-    # Using standard (non-reversed) axis as requested "bottom to top"
-    fig.update_yaxes(title_text="Pace (min/km)", autorange="reversed", row=1, col=1, range=[12, 3])
 
     fig.add_trace(
         go.Scatter(
@@ -495,54 +428,6 @@ def _render_route_map(track_df):
     # Render the map
     # Use a large width to fill the container (standard Streamlit wide mode is ~1200px)
     folium_static(m, width=1600, height=500)
-            st.info("No device laps found. Showing 1km splits.")
-            _render_splits_table(track_df)
-
-    with tab4:
-        _render_route_map(track_df)
-
-
-def _render_route_map(track_df):
-    """Render GPS route map using folium."""
-    st.subheader("Route Map")
-
-    # Get GPS coordinates from database stream
-    if "latitude" not in track_df.columns or "longitude" not in track_df.columns:
-        st.warning("No GPS data available for this activity.")
-        return
-
-    # Filter out null coordinates
-    gps_df = track_df.dropna(subset=["latitude", "longitude"])
-
-    if gps_df.empty:
-        st.warning("No valid GPS coordinates found.")
-        return
-
-    # Create map centered on the route
-    center_lat = gps_df["latitude"].mean()
-    center_lon = gps_df["longitude"].mean()
-
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
-
-    # Create route coordinates
-    coordinates = list(zip(gps_df["latitude"], gps_df["longitude"]))
-
-    # Add route line
-    folium.PolyLine(coordinates, color="blue", weight=3, opacity=0.8).add_to(m)
-
-    # Add start marker (green)
-    folium.Marker(
-        coordinates[0], popup="Start", icon=folium.Icon(color="green", icon="play")
-    ).add_to(m)
-
-    # Add finish marker (red)
-    folium.Marker(
-        coordinates[-1], popup="Finish", icon=folium.Icon(color="red", icon="stop")
-    ).add_to(m)
-
-    # Render the map
-    # Use a large width to fill the container (standard Streamlit wide mode is ~1200px)
-    folium_static(m, width=1600, height=500)
 
 
 def page_recent_activities(_, zones):
@@ -554,7 +439,6 @@ def page_recent_activities(_, zones):
         return
 
     options = available_activities.apply(
-        lambda x: f"{x['activity_date'].date()} - {x.get('activity_name', 'Unknown')}",
         lambda x: f"{x['activity_date'].date()} - {x.get('activity_name', 'Unknown')}",
         axis=1,
     ).tolist()
