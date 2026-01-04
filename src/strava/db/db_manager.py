@@ -3,8 +3,8 @@
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
-import pandas as pd
 from typing import Optional, List, Dict, Any
+import pandas as pd
 
 
 class DatabaseManager:
@@ -163,7 +163,7 @@ class DatabaseManager:
     def get_latest_activity_timestamp(self) -> Optional[int]:
         """
         Get the timestamp of the latest activity in the database.
-        
+
         Returns:
             Unix timestamp (int) or None if no activities exist.
         """
@@ -173,7 +173,7 @@ class DatabaseManager:
                 # Strava dates are ISO strings, e.g., "2018-02-16T14:52:54Z"
                 dt = pd.to_datetime(result[0]["latest"])
                 return int(dt.timestamp())
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 return None
         return None
 

@@ -265,7 +265,8 @@ def _render_splits_table(track_df):
     st.dataframe(display_splits, width="stretch")
 
 
-def _get_available_activities(df):
+def _get_available_activities():
+    """Get activities that have stream data available."""
     # Use database helper to find activities with streams
     activities = get_activities_with_streams()
 
@@ -432,10 +433,10 @@ def _render_route_map(track_df):
     folium_static(m, width=1600, height=500)
 
 
-def page_recent_activities(df, zones):
+def page_recent_activities(_, zones):
     st.header("Deep Dive Analysis")
 
-    available_activities = _get_available_activities(df)
+    available_activities = _get_available_activities()
     if available_activities.empty:
         st.warning("No activities with stream data found. Try importing detailed data.")
         return
@@ -471,9 +472,9 @@ def page_recent_activities(df, zones):
                 # Ensure proper types
                 if "Time" in track_df.columns:
                     track_df["Time"] = pd.to_datetime(track_df["Time"])
-                
+
                 track_df = _calculate_metrics(track_df)
-                
+
                 if track_df is None or track_df.empty:
                     st.error("Processing failed: `_calculate_metrics` returned empty data.")
                     return
@@ -481,8 +482,10 @@ def page_recent_activities(df, zones):
                 _display_stats(track_df, selected_row)
                 _render_deep_dive_tabs(track_df, laps_df, zones)
             else:
-                st.error(f"No stream records found in database for activity {selected_row['activity_id']}.")
+                st.error(
+                    f"No stream records found for activity {selected_row['activity_id']}."
+                )
                 st.info("Try refreshing data from Strava if this is a new activity.")
-        except Exception as e:
-            st.error(f"Error loading stream data: {e}")
-            st.exception(e)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            st.error(f"Error loading stream data: {exc}")
+            st.exception(exc)

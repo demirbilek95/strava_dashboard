@@ -147,6 +147,8 @@ def test_database_stats(db_manager):
     assert stats["total_activities"] == 2
     assert "Run" in stats["activity_types"]
     assert "Ride" in stats["activity_types"]
+
+
 def test_get_activities_with_streams(db_manager):
     """Test get_activities_with_streams query."""
     activity_id = 999

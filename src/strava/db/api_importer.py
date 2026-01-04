@@ -1,22 +1,24 @@
 from typing import Dict, Any, Callable, Optional
 import pandas as pd
 
-from strava.utils.strava_api import StravaAPI
 from strava.db.db_manager import DatabaseManager
+from strava.utils.strava_api import StravaAPI
 
 
-class StravaImporter:
+class StravaImporter:  # pylint: disable=too-few-public-methods
     def __init__(self, db_manager: DatabaseManager, api_client: StravaAPI):
         self.db = db_manager
         self.api = api_client
 
-    def import_all_data(self, progress_callback: Optional[Callable[[str, float], None]] = None) -> int:
+    def import_all_data(
+        self, progress_callback: Optional[Callable[[str, float], None]] = None
+    ) -> int:
         """
         Import all activities and streams from Strava API.
 
         Args:
             progress_callback: Function accepting (status_message, percent_complete)
-            
+
         Returns:
             int: Number of activities imported.
         """
@@ -25,7 +27,7 @@ class StravaImporter:
 
         # Get latest activity timestamp from DB for incremental fetch
         latest_timestamp = self.db.get_latest_activity_timestamp()
-        
+
         # 1. Fetch Activities (incremental if latest_timestamp exists)
         activities = self.api.get_all_activities(after=latest_timestamp)
         total_activities = len(activities)
@@ -37,7 +39,11 @@ class StravaImporter:
             return 0
 
         if progress_callback:
-            msg = f"Found {total_activities} new activities. Starting import..." if latest_timestamp else f"Found {total_activities} activities. Starting import..."
+            msg = (
+                f"Found {total_activities} new activities. Starting import..."
+                if latest_timestamp
+                else f"Found {total_activities} activities. Starting import..."
+            )
             progress_callback(msg, 0.1)
 
         # 2. Insert Activities and Fetch Streams
@@ -53,8 +59,8 @@ class StravaImporter:
                     self._process_and_insert_streams(
                         activity["id"], activity["start_date"], streams
                     )
-            except Exception as e:
-                print(f"Failed to fetch/insert streams for activity {activity['id']}: {e}")
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                print(f"Failed to fetch/insert streams for activity {activity['id']}: {exc}")
 
             if progress_callback:
                 percent = 0.1 + (0.9 * (i + 1) / total_activities)
@@ -62,7 +68,7 @@ class StravaImporter:
 
         if progress_callback:
             progress_callback("Import complete!", 1.0)
-            
+
         return total_activities
 
     def _map_activity(self, api_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -152,6 +158,6 @@ class StravaImporter:
         # To avoid massive memory usage, maybe batch in chunks?
         # But SQLite execute_many is reasonably efficient.
 
-        # However, we should delete existing streams for this activity first to avoid duplication/errors
+        # However, we should delete existing streams first to avoid duplication
         self.db.delete_activity_streams(activity_id)
         self.db.insert_stream_batch(records)

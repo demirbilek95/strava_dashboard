@@ -118,7 +118,10 @@ def _plot_distance(filtered_df):
 
     plot_df = filtered_df.copy()
     plot_df["Week"] = (
-        plot_df["activity_date"].dt.tz_localize(None).dt.to_period("W-SUN").apply(lambda r: r.start_time)
+        plot_df["activity_date"]
+        .dt.tz_localize(None)
+        .dt.to_period("W-SUN")
+        .apply(lambda r: r.start_time)
     )
     weekly_dist = plot_df.groupby("Week")["distance"].sum().reset_index()
 

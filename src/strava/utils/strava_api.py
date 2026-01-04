@@ -23,11 +23,11 @@ class StravaAPI:
         """
         # Load environment variables (done at module level but reload to be safe)
         dotenv.load_dotenv()
-        
+
         self.client_id = os.getenv("STRAVA_CLIENT_ID")
         self.client_secret = os.getenv("STRAVA_CLIENT_SECRET")
         self.refresh_token = os.getenv("STRAVA_REFRESH_TOKEN")
-        
+
         self.access_token = access_token or os.getenv("STRAVA_ACCESS_TOKEN")
         if not self.access_token:
             raise ValueError("Strava access token is required")
@@ -67,17 +67,18 @@ class StravaAPI:
         """Generate the authorization URL for Strava OAuth."""
         if not self.client_id:
             raise ValueError("STRAVA_CLIENT_ID is not set")
-            
+
         base_url = "https://www.strava.com/oauth/authorize"
         params = {
             "client_id": self.client_id,
             "redirect_uri": "http://localhost",  # Default redirect URI
             "response_type": "code",
             "approval_prompt": "force",
-            "scope": "read,activity:read,activity:read_all"
+            "scope": "read,activity:read,activity:read_all",
         }
-        
+
         from urllib.parse import urlencode
+
         return f"{base_url}?{urlencode(params)}"
 
     def exchange_code_for_tokens(self, authorization_code: str):
@@ -116,7 +117,7 @@ class StravaAPI:
         new_lines = []
         updated_access = False
         updated_refresh = False
-        
+
         for line in lines:
             if line.startswith("STRAVA_ACCESS_TOKEN="):
                 new_lines.append(f"STRAVA_ACCESS_TOKEN={access_token}\n")
@@ -138,7 +139,7 @@ class StravaAPI:
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         """Make an authenticated request with automatic token refresh."""
         response = self.session.request(method, url, **kwargs)
-        
+
         if response.status_code == 401:
             # Check if it's a scope issue vs expired token
             try:
@@ -146,18 +147,17 @@ class StravaAPI:
                 if any(err.get("code") == "missing" for err in error_data.get("errors", [])):
                     # This is a scope issue, refreshing won't help if the grant is limited
                     return response
-            except Exception:
+            except Exception:  # pylint: disable=broad-exception-caught
                 pass
 
             try:
                 self._refresh_access_token()
                 # Retry once
                 response = self.session.request(method, url, **kwargs)
-            except Exception as e:
-                print(f"Token refresh failed: {e}")
-        
-        return response
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                print(f"Token refresh failed: {exc}")
 
+        return response
 
     def get_athlete(self) -> Dict[str, Any]:
         """Fetch current authenticated athlete."""
@@ -206,14 +206,24 @@ class StravaAPI:
         """
         if not keys:
             keys = [
-                "time", "latlng", "distance", "altitude", "velocity_smooth",
-                "heartrate", "cadence", "watts", "temp", "moving"
+                "time",
+                "latlng",
+                "distance",
+                "altitude",
+                "velocity_smooth",
+                "heartrate",
+                "cadence",
+                "watts",
+                "temp",
+                "moving",
             ]
 
         keys_str = ",".join(keys)
         params = {"keys": keys_str, "key_by_type": "true"}
 
-        response = self._request("GET", f"{self.BASE_URL}/activities/{activity_id}/streams", params=params)
+        response = self._request(
+            "GET", f"{self.BASE_URL}/activities/{activity_id}/streams", params=params
+        )
         if response.status_code == 404:
             return {}
         response.raise_for_status()
@@ -222,7 +232,7 @@ class StravaAPI:
     def get_all_activities(self, after: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         Fetch ALL activities using pagination.
-        
+
         Args:
             after: Optional Unix timestamp for fetching activities after this date.
         """
@@ -235,4 +245,3 @@ class StravaAPI:
             all_activities.extend(activities)
             page += 1
         return all_activities
-
