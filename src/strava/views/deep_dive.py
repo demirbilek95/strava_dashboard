@@ -4,9 +4,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import folium
 from streamlit_folium import folium_static
-from strava.data import get_activity_stream
+from strava.data import get_activity_stream, get_activities_with_streams
 from strava.utils.activity_processing import _calculate_metrics, _calculate_splits
-from strava.utils.file_parsing import load_and_parse_file
 
 
 def _render_hr_analysis(track_df, zones):
@@ -268,14 +267,19 @@ def _render_splits_table(track_df):
 
 
 def _get_available_activities(df):
-    if "filename" not in df.columns:
-        st.error("Filename column missing in data.")
+    # Use database helper to find activities with streams
+    activities = get_activities_with_streams()
+
+    if activities.empty:
         return pd.DataFrame()
 
-    mask = df["filename"].str.contains(r"\.(?:tcx|fit)", case=False, na=False) & (
-        df["activity_type"] == "Run"
-    )
-    return df[mask].copy().sort_values(by="activity_date", ascending=False)
+    # Ensure date column is datetime
+    if "activity_date" in activities.columns:
+        activities["activity_date"] = pd.to_datetime(activities["activity_date"])
+
+    # Filter for Runs
+    mask = activities["activity_type"] == "Run"
+    return activities[mask].copy().sort_values(by="activity_date", ascending=False)
 
 
 def format_duration(seconds):
@@ -289,9 +293,15 @@ def format_duration(seconds):
 
 
 def _display_stats(track_df, selected_row):
-    # Summary data from Strava
+    # Summary data from Strava OR fallback to calculated from tracks
     dist_km = selected_row.get("distance", track_df["Distance"].max() / 1000)
-    moving_s = selected_row.get("moving_time", track_df[track_df["Is_Moving"]]["Time_Diff"].sum())
+
+    # Try using summary moving time, else sum
+    if "moving_time" in selected_row and pd.notna(selected_row["moving_time"]):
+        moving_s = selected_row["moving_time"]
+    else:
+        moving_s = track_df[track_df["Is_Moving"]]["Time_Diff"].sum()
+
     elapsed_s = selected_row.get("elapsed_time", track_df["Elapsed Seconds"].max())
     elev_gain = selected_row.get("elevation_gain", track_df["Elev_Gain_Step"].sum())
 
@@ -322,6 +332,7 @@ def _display_stats(track_df, selected_row):
 
     # Cadence if available
     if "cadence" in track_df.columns:
+        # Avoid mean of 0 cadence?
         avg_cadence = track_df[track_df["Is_Moving"]]["cadence"].mean()
         col4.metric(
             "Avg Cadence",
@@ -427,7 +438,7 @@ def page_recent_activities(df, zones):
 
     available_activities = _get_available_activities(df)
     if available_activities.empty:
-        st.warning("No activities with TCX/FIT data found.")
+        st.warning("No activities with stream data found. Try importing detailed data.")
         return
 
     options = available_activities.apply(
@@ -457,16 +468,12 @@ def page_recent_activities(df, zones):
                 "longitude": "longitude",  # Keep as is for GPS mapping
             }
             track_df = track_df.rename(columns=rename_map)
-            track_df["Time"] = pd.to_datetime(track_df["Time"])
+            # Ensure proper types
+            if "Time" in track_df.columns:
+                track_df["Time"] = pd.to_datetime(track_df["Time"])
             track_df = _calculate_metrics(track_df)
-            # Try to load laps from file anyway if needed, or stick to auto-splits
-            # For now, let's also try to load laps if it's a FIT file
-            if ".fit" in selected_row["filename"].lower():
-                _, laps_df = load_and_parse_file(selected_row["filename"])
-        else:
-            # Fallback to file parsing
-            track_df, laps_df = load_and_parse_file(selected_row["filename"])
 
-        if track_df is not None:
             _display_stats(track_df, selected_row)
             _render_deep_dive_tabs(track_df, laps_df, zones)
+        else:
+            st.error("Failed to load detailed stream data for this activity.")

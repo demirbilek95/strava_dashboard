@@ -10,14 +10,14 @@ requires-python = ">=3.11"
 dependencies = [
     "ipython (>=9.6.0,<10.0.0)",
     "ipykernel (>=7.0.1,<8.0.0)",
-    "python-tcxparser (>=2.4.0,<3.0.0)",
     "pandas (>=2.3.3,<3.0.0)",
     "plotly (>=6.3.1,<7.0.0)",
     "streamlit (>=1.50.0,<2.0.0)",
-    "fitparse (>=1.2.0,<2.0.0)",
     "garmin-fit-sdk (>=21.178.0,<22.0.0)",
     "folium (>=0.15.0,<1.0.0)",
-    "streamlit-folium (>=0.13.0,<1.0.0)"
+    "streamlit-folium (>=0.13.0,<1.0.0)",
+    "requests (>=2.32.5,<3.0.0)",
+    "python-dotenv (>=1.2.1,<2.0.0)"
 ]
 
 [dependency-groups]
