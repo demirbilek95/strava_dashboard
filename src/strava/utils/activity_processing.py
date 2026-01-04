@@ -1,64 +1,6 @@
 import pandas as pd
 
 
-def _create_track_df(timestamps, hrs, alts, dists, lats=None, lons=None):
-    if not timestamps:
-        return pd.DataFrame()
-
-    min_len = len(timestamps)
-
-    # helper to pad/trunc list
-    def adjust(lst):
-        if len(lst) < min_len:
-            return lst + [None] * (min_len - len(lst))
-        if len(lst) > min_len:
-            return lst[:min_len]
-        return lst
-
-    hrs = adjust(hrs)
-    alts = adjust(alts)
-    dists = adjust(dists)
-
-    track_df = pd.DataFrame(
-        {
-            "Time": pd.to_datetime(timestamps, errors="coerce"),
-            "HR": hrs,
-            "Altitude": alts,
-            "Distance": dists,
-            "latitude": lats if lats else [None] * min_len,
-            "longitude": lons if lons else [None] * min_len,
-        }
-    )
-
-    track_df["HR"] = pd.to_numeric(track_df["HR"], errors="coerce")
-    track_df["Altitude"] = pd.to_numeric(track_df["Altitude"], errors="coerce")
-    track_df["Distance"] = pd.to_numeric(track_df["Distance"], errors="coerce")
-
-    # Fill gaps
-    track_df["Distance"] = track_df["Distance"].ffill()
-    track_df["Altitude"] = track_df["Altitude"].ffill()
-    track_df["HR"] = track_df["HR"].ffill()
-
-    track_df["HR"] = track_df["HR"].ffill()
-
-    # Convert semicircles to degrees if needed for simple lat/lon columns
-    def to_degrees(val):
-        if pd.isna(val):
-            return None
-        # Heuristic: if value > 180, it's likely semicircles
-        if abs(val) > 180:
-            return val * (180.0 / 2**31)
-        return val
-
-    if "latitude" in track_df.columns:
-        track_df["latitude"] = track_df["latitude"].apply(to_degrees)
-    if "longitude" in track_df.columns:
-        track_df["longitude"] = track_df["longitude"].apply(to_degrees)
-
-    track_df = track_df.dropna(subset=["Time"])
-    return track_df
-
-
 def _calculate_metrics(track_df):
     if track_df.empty:
         return None

@@ -11,31 +11,7 @@ sys.path.append(os.path.abspath("src"))
 sys.modules["streamlit"] = MagicMock()
 sys.modules["streamlit_folium"] = MagicMock()
 
-from strava.utils.activity_processing import _create_track_df
 from strava.views.deep_dive import _render_plots
-
-
-def test_create_track_df():
-    print("Testing _create_track_df...")
-    timestamps = ["2023-01-01 10:00:00", "2023-01-01 10:00:01"]
-    hrs = [140, 142]
-    alts = [10, 11]
-    dists = [0, 5]
-    lats = [123456789, 123456790]  # Semicircles (approx) or just raw
-    lons = [-123456789, -123456790]
-
-    # Test with lats/lons
-    df = _create_track_df(timestamps, hrs, alts, dists, lats, lons)
-
-    assert "latitude" in df.columns, "latitude column missing"
-    assert "longitude" in df.columns, "longitude column missing"
-    assert not df["latitude"].isnull().all(), "latitude is all null"
-
-    # Check conversion (heuristic > 180)
-    # 123456789 is way > 180, so it should be converted to degrees (~10 deg)
-    assert abs(df["latitude"].iloc[0]) < 180, "latitude not converted to degrees"
-
-    print("✅ _create_track_df passed.")
 
 
 def test_render_plots():
@@ -136,7 +112,6 @@ def test_render_route_map():
 
 if __name__ == "__main__":
     try:
-        test_create_track_df()
         test_render_plots()
         test_render_route_map()
         print("\nAll tests passed!")

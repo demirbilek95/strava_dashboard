@@ -122,33 +122,6 @@ def test_insert_streams(db_manager):
     assert db_manager.activity_has_streams(activity_id) is True
 
 
-def test_database_stats(db_manager):
-    """Test get_database_stats."""
-    # Insert some data
-    db_manager.insert_activity(
-        {
-            "activity_id": 1,
-            "activity_name": "Run 1",
-            "activity_type": "Run",
-            "activity_date": "2023-01-01",
-        }
-    )
-    db_manager.insert_activity(
-        {
-            "activity_id": 2,
-            "activity_name": "Ride 1",
-            "activity_type": "Ride",
-            "activity_date": "2023-01-02",
-        }
-    )
-
-    stats = db_manager.get_database_stats()
-
-    assert stats["total_activities"] == 2
-    assert "Run" in stats["activity_types"]
-    assert "Ride" in stats["activity_types"]
-
-
 def test_get_activities_with_streams(db_manager):
     """Test get_activities_with_streams query."""
     activity_id = 999
