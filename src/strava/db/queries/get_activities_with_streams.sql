@@ -1,4 +1,5 @@
 -- Query to get list of activities that have stream data available
-SELECT DISTINCT activity_id 
-FROM activity_streams 
-ORDER BY activity_id DESC
+SELECT DISTINCT a.* 
+FROM activities a
+INNER JOIN activity_streams s ON a.activity_id = s.activity_id
+ORDER BY a.activity_date DESC
