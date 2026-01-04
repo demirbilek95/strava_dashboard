@@ -3,6 +3,7 @@
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
+import pandas as pd
 from typing import Optional, List, Dict, Any
 
 
@@ -158,6 +159,23 @@ class DatabaseManager:
             "SELECT 1 FROM activity_streams WHERE activity_id = ? LIMIT 1", (activity_id,)
         )
         return len(result) > 0
+
+    def get_latest_activity_timestamp(self) -> Optional[int]:
+        """
+        Get the timestamp of the latest activity in the database.
+        
+        Returns:
+            Unix timestamp (int) or None if no activities exist.
+        """
+        result = self.execute_query("SELECT MAX(activity_date) as latest FROM activities")
+        if result and result[0]["latest"]:
+            try:
+                # Strava dates are ISO strings, e.g., "2018-02-16T14:52:54Z"
+                dt = pd.to_datetime(result[0]["latest"])
+                return int(dt.timestamp())
+            except Exception:
+                return None
+        return None
 
     def get_activity_stream(self, activity_id: int) -> List[Dict[str, Any]]:
         """

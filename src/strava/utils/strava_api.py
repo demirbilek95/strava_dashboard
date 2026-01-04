@@ -219,12 +219,17 @@ class StravaAPI:
         response.raise_for_status()
         return response.json()
 
-    def get_all_activities(self) -> List[Dict[str, Any]]:
-        """Fetch ALL activities using pagination."""
+    def get_all_activities(self, after: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Fetch ALL activities using pagination.
+        
+        Args:
+            after: Optional Unix timestamp for fetching activities after this date.
+        """
         all_activities = []
         page = 1
         while True:
-            activities = self.get_activities(page=page, per_page=200)
+            activities = self.get_activities(page=page, per_page=200, after=after)
             if not activities:
                 break
             all_activities.extend(activities)

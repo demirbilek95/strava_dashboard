@@ -10,27 +10,35 @@ class StravaImporter:
         self.db = db_manager
         self.api = api_client
 
-    def import_all_data(self, progress_callback: Optional[Callable[[str, float], None]] = None):
+    def import_all_data(self, progress_callback: Optional[Callable[[str, float], None]] = None) -> int:
         """
         Import all activities and streams from Strava API.
 
         Args:
             progress_callback: Function accepting (status_message, percent_complete)
+            
+        Returns:
+            int: Number of activities imported.
         """
         if progress_callback:
-            progress_callback("Fetching activities list...", 0.0)
+            progress_callback("Checking for new activities...", 0.0)
 
-        # 1. Fetch Activities
-        activities = self.api.get_all_activities()
+        # Get latest activity timestamp from DB for incremental fetch
+        latest_timestamp = self.db.get_latest_activity_timestamp()
+        
+        # 1. Fetch Activities (incremental if latest_timestamp exists)
+        activities = self.api.get_all_activities(after=latest_timestamp)
         total_activities = len(activities)
 
         if total_activities == 0:
             if progress_callback:
-                progress_callback("No activities found.", 1.0)
-            return
+                status = "Data is up to date." if latest_timestamp else "No activities found."
+                progress_callback(status, 1.0)
+            return 0
 
         if progress_callback:
-            progress_callback(f"Found {total_activities} activities. Starting import...", 0.1)
+            msg = f"Found {total_activities} new activities. Starting import..." if latest_timestamp else f"Found {total_activities} activities. Starting import..."
+            progress_callback(msg, 0.1)
 
         # 2. Insert Activities and Fetch Streams
         for i, activity in enumerate(activities):
@@ -39,8 +47,6 @@ class StravaImporter:
             self.db.insert_activity(db_activity)
 
             # Fetch and insert streams
-            # Only fetch streams if it's a relevant activity type (e.g. Run, Ride) or just try for all
-            # Strava API might return 404 for manual entries without streams
             try:
                 streams = self.api.get_activity_streams(activity["id"])
                 if streams:
@@ -56,6 +62,8 @@ class StravaImporter:
 
         if progress_callback:
             progress_callback("Import complete!", 1.0)
+            
+        return total_activities
 
     def _map_activity(self, api_data: Dict[str, Any]) -> Dict[str, Any]:
         """Map Strava API activity object to DB keys."""

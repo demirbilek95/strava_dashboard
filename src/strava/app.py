@@ -123,17 +123,28 @@ def main():
         try:
             api = StravaAPI()
             importer = StravaImporter(db, api)
+            
+            progress_bar = st.sidebar.progress(0)
+            status_text = st.sidebar.empty()
+
+            def update_progress(msg, percent):
+                status_text.text(msg)
+                progress_bar.progress(percent)
+
             with st.spinner("Refreshing data..."):
-                importer.import_all_data()
-            st.success("Data refreshed!")
-            st.rerun()
+                count = importer.import_all_data(progress_callback=update_progress)
+            
+            if count > 0:
+                st.sidebar.success(f"Successfully imported {count} new activities!")
+                st.rerun()
+            else:
+                st.sidebar.info("Data is already up to date.")
+                
         except Exception as e:
             st.sidebar.error(f"Update failed: {e}")
             if "401" in str(e) or "missing" in str(e).lower():
                 st.sidebar.warning("Permissions might be missing or expired.")
                 if st.sidebar.button("🔑 Re-authorize Strava"):
-                    # Clear data or just show welcome? Let's show welcome.
-                    # We can use a session state to force welcome page
                     st.session_state["force_reauth"] = True
                     st.rerun()
 
