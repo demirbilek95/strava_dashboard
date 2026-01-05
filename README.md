@@ -11,8 +11,8 @@ A comprehensive analytics dashboard for Strava activity data. Gain insights into
     poetry install
     ```
 
-2.  **Configuration**
-    Create a `.env` file with your Strava API credentials:
+2.  **API Configuration**
+    The application requires its own credentials to perform the OAuth exchange. Create a `.env` file with your Client ID and Secret from the [Strava API settings](https://www.strava.com/settings/api):
     ```env
     STRAVA_CLIENT_ID=your_client_id
     STRAVA_CLIENT_SECRET=your_client_secret
