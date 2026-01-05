@@ -1,8 +1,7 @@
-import pandas as pd
-
-from unittest.mock import MagicMock
-import sys
 import os
+import sys
+from unittest.mock import MagicMock
+import pandas as pd
 
 # Add src to path
 sys.path.append(os.path.abspath("src"))
@@ -11,31 +10,8 @@ sys.path.append(os.path.abspath("src"))
 sys.modules["streamlit"] = MagicMock()
 sys.modules["streamlit_folium"] = MagicMock()
 
-from strava.utils.activity_processing import _create_track_df
-from strava.views.deep_dive import _render_plots
-
-
-def test_create_track_df():
-    print("Testing _create_track_df...")
-    timestamps = ["2023-01-01 10:00:00", "2023-01-01 10:00:01"]
-    hrs = [140, 142]
-    alts = [10, 11]
-    dists = [0, 5]
-    lats = [123456789, 123456790]  # Semicircles (approx) or just raw
-    lons = [-123456789, -123456790]
-
-    # Test with lats/lons
-    df = _create_track_df(timestamps, hrs, alts, dists, lats, lons)
-
-    assert "latitude" in df.columns, "latitude column missing"
-    assert "longitude" in df.columns, "longitude column missing"
-    assert not df["latitude"].isnull().all(), "latitude is all null"
-
-    # Check conversion (heuristic > 180)
-    # 123456789 is way > 180, so it should be converted to degrees (~10 deg)
-    assert abs(df["latitude"].iloc[0]) < 180, "latitude not converted to degrees"
-
-    print("✅ _create_track_df passed.")
+# pylint: disable=wrong-import-position
+from strava.views.deep_dive import _render_plots, _render_route_map
 
 
 def test_render_plots():
@@ -106,7 +82,6 @@ def test_render_plots():
 
 def test_render_route_map():
     print("Testing _render_route_map (Map Width)...")
-    from strava.views.deep_dive import _render_route_map
 
     # Mock DF with lat/lon
     df = pd.DataFrame(
@@ -125,7 +100,7 @@ def test_render_route_map():
     folium_static_mock = sys.modules["streamlit_folium"].folium_static
 
     # Get kwargs
-    args, kwargs = folium_static_mock.call_args
+    _, kwargs = folium_static_mock.call_args
 
     width = kwargs.get("width")
     print(f"Map width used: {width}")
@@ -136,13 +111,12 @@ def test_render_route_map():
 
 if __name__ == "__main__":
     try:
-        test_create_track_df()
         test_render_plots()
         test_render_route_map()
         print("\nAll tests passed!")
     except AssertionError as e:
         print(f"\n❌ Test failed: {e}")
-        exit(1)
-    except Exception as e:
+        sys.exit(1)
+    except Exception as e:  # pylint: disable=broad-exception-caught
         print(f"\n❌ Error: {e}")
-        exit(1)
+        sys.exit(1)

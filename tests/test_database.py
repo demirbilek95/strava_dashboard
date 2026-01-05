@@ -1,9 +1,10 @@
-import pytest
+import os
 import sqlite3
 import tempfile
-import os
-
+import pytest
 from strava.db.db_manager import DatabaseManager
+
+# pylint: disable=redefined-outer-name
 
 
 @pytest.fixture
@@ -77,7 +78,8 @@ def test_insert_and_get_activity(db_manager):
 def test_insert_streams(db_manager):
     """Test inserting and retrieving streams."""
     activity_id = 12345
-    # First insert parent activity (foreign key constraint might not be enforced by default in sqlite python but good practice)
+    # First insert parent activity (foreign key constraint might not be enforced
+    # by default in sqlite python but good practice)
     db_manager.insert_activity(
         {
             "activity_id": activity_id,
@@ -122,28 +124,33 @@ def test_insert_streams(db_manager):
     assert db_manager.activity_has_streams(activity_id) is True
 
 
-def test_database_stats(db_manager):
-    """Test get_database_stats."""
-    # Insert some data
+def test_get_activities_with_streams(db_manager):
+    """Test get_activities_with_streams query."""
+    activity_id = 999
     db_manager.insert_activity(
         {
-            "activity_id": 1,
-            "activity_name": "Run 1",
+            "activity_id": activity_id,
+            "activity_name": "Streamed Run",
             "activity_type": "Run",
             "activity_date": "2023-01-01",
         }
     )
-    db_manager.insert_activity(
-        {
-            "activity_id": 2,
-            "activity_name": "Ride 1",
-            "activity_type": "Ride",
-            "activity_date": "2023-01-02",
-        }
+    db_manager.insert_stream_batch(
+        [
+            {
+                "activity_id": activity_id,
+                "timestamp": "2023-01-01T10:00:00Z",
+                "heart_rate": 150,
+            }
+        ]
     )
 
-    stats = db_manager.get_database_stats()
+    # Use the specific method or manual query execution
+    query = db_manager.load_query("get_activities_with_streams")
+    rows = db_manager.execute_query(query)
 
-    assert stats["total_activities"] == 2
-    assert "Run" in stats["activity_types"]
-    assert "Ride" in stats["activity_types"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["activity_id"] == activity_id
+    assert row["activity_type"] == "Run"
+    assert "activity_date" in row.keys()

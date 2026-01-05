@@ -4,9 +4,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import folium
 from streamlit_folium import folium_static
-from strava.data import get_activity_stream
+from strava.data import get_activity_stream, get_activities_with_streams
 from strava.utils.activity_processing import _calculate_metrics, _calculate_splits
-from strava.utils.file_parsing import load_and_parse_file
 
 
 def _render_hr_analysis(track_df, zones):
@@ -81,9 +80,6 @@ def _render_plots(track_df, zones):
 
     # 1. Pace (Top) - Standard ordering (Bottom-to-Top) with zone colors
     pace_df = track_df[(track_df["Pace_Decimal"] < 12) & (track_df["Pace_Decimal"] > 3)].copy()
-
-    # Add pace zone colors as background bands
-    # Zone shading removed from Pace plot as requested
 
     # Add HR zone colors as background bands for HR plot
     hr_zones = zones  # (z1, z2, z3, z4)
@@ -170,7 +166,7 @@ def _render_plots(track_df, zones):
     fig.update_yaxes(title_text="Heart Rate (bpm)", row=3, col=1)
 
     fig.update_layout(height=700, hovermode="x unified", showlegend=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
 
 def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
@@ -231,11 +227,10 @@ def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
             "tickvals": tick_vals,
             "ticktext": tick_texts,
         },
-        margin={"r": 140, "b": 150},
         height=400,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
 
 def _render_splits_table(track_df):
@@ -264,18 +259,24 @@ def _render_splits_table(track_df):
         )
     display_splits["Distance"] = display_splits["Distance"].apply(lambda x: f"{x:.2f} km")
 
-    st.dataframe(display_splits, use_container_width=True)
+    st.dataframe(display_splits, width="stretch")
 
 
-def _get_available_activities(df):
-    if "filename" not in df.columns:
-        st.error("Filename column missing in data.")
+def _get_available_activities():
+    """Get activities that have stream data available."""
+    # Use database helper to find activities with streams
+    activities = get_activities_with_streams()
+
+    if activities.empty:
         return pd.DataFrame()
 
-    mask = df["filename"].str.contains(r"\.(?:tcx|fit)", case=False, na=False) & (
-        df["activity_type"] == "Run"
-    )
-    return df[mask].copy().sort_values(by="activity_date", ascending=False)
+    # Ensure date column is datetime
+    if "activity_date" in activities.columns:
+        activities["activity_date"] = pd.to_datetime(activities["activity_date"])
+
+    # Filter for Runs
+    mask = activities["activity_type"] == "Run"
+    return activities[mask].copy().sort_values(by="activity_date", ascending=False)
 
 
 def format_duration(seconds):
@@ -289,15 +290,20 @@ def format_duration(seconds):
 
 
 def _display_stats(track_df, selected_row):
-    # Summary data from Strava
+    # Summary data from Strava OR fallback to calculated from tracks
     dist_km = selected_row.get("distance", track_df["Distance"].max() / 1000)
-    moving_s = selected_row.get("moving_time", track_df[track_df["Is_Moving"]]["Time_Diff"].sum())
+
+    # Try using summary moving time, else sum
+    if "moving_time" in selected_row and pd.notna(selected_row["moving_time"]):
+        moving_s = selected_row["moving_time"]
+    else:
+        moving_s = track_df[track_df["Is_Moving"]]["Time_Diff"].sum()
+
     elapsed_s = selected_row.get("elapsed_time", track_df["Elapsed Seconds"].max())
     elev_gain = selected_row.get("elevation_gain", track_df["Elev_Gain_Step"].sum())
 
     effort = selected_row.get("relative_effort", "N/A")
     calories = selected_row.get("calories", "N/A")
-    gear = selected_row.get("gear", "N/A")
 
     avg_pace_dec = ((moving_s / 60) / dist_km) if dist_km > 0 else 0
 
@@ -313,22 +319,22 @@ def _display_stats(track_df, selected_row):
 
     st.markdown("---")
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     avg_hr = selected_row.get("average_heart_rate", track_df["HR"].mean())
     max_hr = selected_row.get("max_heart_rate", track_df["HR"].max())
     col1.metric("Avg HR", f"{avg_hr:.0f} bpm")
     col2.metric("Max HR", f"{max_hr:.0f} bpm")
-    col3.metric("Gear", gear)
 
     # Cadence if available
     if "cadence" in track_df.columns:
+        # Avoid mean of 0 cadence?
         avg_cadence = track_df[track_df["Is_Moving"]]["cadence"].mean()
-        col4.metric(
+        col3.metric(
             "Avg Cadence",
             f"{avg_cadence:.0f} spm" if pd.notna(avg_cadence) else "N/A",
         )
     else:
-        col4.metric("Avg Cadence", "N/A")
+        col3.metric("Avg Cadence", "N/A")
 
 
 def _render_deep_dive_tabs(track_df, laps_df, zones):
@@ -370,7 +376,7 @@ def _render_deep_dive_tabs(track_df, laps_df, zones):
                 lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
             )
 
-            st.dataframe(l_display, use_container_width=True)
+            st.dataframe(l_display, width="stretch")
         else:
             st.info("No device laps found. Showing 1km splits.")
             _render_splits_table(track_df)
@@ -422,12 +428,12 @@ def _render_route_map(track_df):
     folium_static(m, width=1600, height=500)
 
 
-def page_recent_activities(df, zones):
+def page_recent_activities(_, zones):
     st.header("Deep Dive Analysis")
 
-    available_activities = _get_available_activities(df)
+    available_activities = _get_available_activities()
     if available_activities.empty:
-        st.warning("No activities with TCX/FIT data found.")
+        st.warning("No activities with stream data found. Try importing detailed data.")
         return
 
     options = available_activities.apply(
@@ -443,30 +449,36 @@ def page_recent_activities(df, zones):
     selected_row = available_activities.iloc[idx]
 
     with st.spinner("Loading activity data..."):
-        track_df = get_activity_stream(selected_row["activity_id"])
-        laps_df = pd.DataFrame()
+        try:
+            track_df = get_activity_stream(selected_row["activity_id"])
+            laps_df = pd.DataFrame()
 
-        if not track_df.empty:
-            # Rename columns to match existing logic
-            rename_map = {
-                "heart_rate": "HR",
-                "altitude": "Altitude",
-                "distance": "Distance",
-                "timestamp": "Time",
-                "latitude": "latitude",  # Keep as is for GPS mapping
-                "longitude": "longitude",  # Keep as is for GPS mapping
-            }
-            track_df = track_df.rename(columns=rename_map)
-            track_df["Time"] = pd.to_datetime(track_df["Time"])
-            track_df = _calculate_metrics(track_df)
-            # Try to load laps from file anyway if needed, or stick to auto-splits
-            # For now, let's also try to load laps if it's a FIT file
-            if ".fit" in selected_row["filename"].lower():
-                _, laps_df = load_and_parse_file(selected_row["filename"])
-        else:
-            # Fallback to file parsing
-            track_df, laps_df = load_and_parse_file(selected_row["filename"])
+            if not track_df.empty:
+                # Rename columns to match existing logic
+                rename_map = {
+                    "heart_rate": "HR",
+                    "altitude": "Altitude",
+                    "distance": "Distance",
+                    "timestamp": "Time",
+                    "latitude": "latitude",  # Keep as is for GPS mapping
+                    "longitude": "longitude",  # Keep as is for GPS mapping
+                }
+                track_df = track_df.rename(columns=rename_map)
+                # Ensure proper types
+                if "Time" in track_df.columns:
+                    track_df["Time"] = pd.to_datetime(track_df["Time"])
 
-        if track_df is not None:
-            _display_stats(track_df, selected_row)
-            _render_deep_dive_tabs(track_df, laps_df, zones)
+                track_df = _calculate_metrics(track_df)
+
+                if track_df is None or track_df.empty:
+                    st.error("Processing failed: `_calculate_metrics` returned empty data.")
+                    return
+
+                _display_stats(track_df, selected_row)
+                _render_deep_dive_tabs(track_df, laps_df, zones)
+            else:
+                st.error(f"No stream records found for activity {selected_row['activity_id']}.")
+                st.info("Try refreshing data from Strava if this is a new activity.")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            st.error(f"Error loading stream data: {exc}")
+            st.exception(exc)

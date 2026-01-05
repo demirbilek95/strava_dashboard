@@ -63,7 +63,12 @@ def _plot_weekly_duration(filtered_df):
 
     # Create a weekly grouper
     plot_df = filtered_df.copy()
-    plot_df["Week"] = plot_df["activity_date"].dt.to_period("W-SUN").apply(lambda r: r.start_time)
+    plot_df["Week"] = (
+        plot_df["activity_date"]
+        .dt.tz_localize(None)
+        .dt.to_period("W-SUN")
+        .apply(lambda r: r.start_time)
+    )
 
     plot_df["Duration Minutes"] = plot_df["moving_time"] / 60
 
@@ -82,7 +87,7 @@ def _plot_weekly_duration(filtered_df):
             "activity_type": "Activity Type",
         },
     )
-    st.plotly_chart(fig_weekly_stack, use_container_width=True)
+    st.plotly_chart(fig_weekly_stack)
 
 
 def _plot_distribution(filtered_df, zones):
@@ -98,7 +103,7 @@ def _plot_distribution(filtered_df, zones):
             fig_pie = px.pie(
                 activity_counts, values="Count", names="Activity Type", title="Activities by Type"
             )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie)
 
     with c2:
         st.subheader("Intensity Distribution")
@@ -133,7 +138,7 @@ def _plot_distribution(filtered_df, zones):
                     color_discrete_map=zone_colors,
                     category_orders={"HR Zone": ["Z1", "Z2", "Z3", "Z4", "Z5"]},
                 )
-                st.plotly_chart(fig_zone, use_container_width=True)
+                st.plotly_chart(fig_zone)
             else:
                 st.info("No HR data")
         else:

@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
+import pandas as pd
 
 
 class DatabaseManager:
@@ -159,6 +160,23 @@ class DatabaseManager:
         )
         return len(result) > 0
 
+    def get_latest_activity_timestamp(self) -> Optional[int]:
+        """
+        Get the timestamp of the latest activity in the database.
+
+        Returns:
+            Unix timestamp (int) or None if no activities exist.
+        """
+        result = self.execute_query("SELECT MAX(activity_date) as latest FROM activities")
+        if result and result[0]["latest"]:
+            try:
+                # Strava dates are ISO strings, e.g., "2018-02-16T14:52:54Z"
+                dt = pd.to_datetime(result[0]["latest"])
+                return int(dt.timestamp())
+            except Exception:  # pylint: disable=broad-exception-caught
+                return None
+        return None
+
     def get_activity_stream(self, activity_id: int) -> List[Dict[str, Any]]:
         """
         Get all stream records for an activity.
@@ -177,41 +195,3 @@ class DatabaseManager:
         """Delete all stream records for an activity."""
         with self.get_connection() as conn:
             conn.execute("DELETE FROM activity_streams WHERE activity_id = ?", (activity_id,))
-
-    def get_database_stats(self) -> Dict[str, Any]:
-        """Get summary statistics about the database."""
-        stats = {}
-
-        # Total activities
-        stats["total_activities"] = self.get_activity_count()
-
-        # Activities with streams
-        stats["activities_with_streams"] = self.get_activities_with_streams_count()
-
-        # Total stream records
-        result = self.execute_query("SELECT COUNT(*) as count FROM activity_streams")
-        stats["total_stream_records"] = result[0]["count"] if result else 0
-
-        # Date range
-        result = self.execute_query(
-            "SELECT MIN(activity_date) as min_date, MAX(activity_date) as max_date FROM activities"
-        )
-        if result and result[0]["min_date"]:
-            stats["date_range"] = {"start": result[0]["min_date"], "end": result[0]["max_date"]}
-
-        # Activity types
-        result = self.execute_query(
-            """SELECT activity_type, COUNT(*) as count
-               FROM activities
-               WHERE activity_type IS NOT NULL
-               GROUP BY activity_type
-               ORDER BY count DESC"""
-        )
-        stats["activity_types"] = {row["activity_type"]: row["count"] for row in result}
-
-        # Database size
-        stats["database_size_mb"] = (
-            self.db_path.stat().st_size / (1024 * 1024) if self.db_path.exists() else 0
-        )
-
-        return stats

@@ -117,7 +117,12 @@ def _plot_distance(filtered_df):
         return
 
     plot_df = filtered_df.copy()
-    plot_df["Week"] = plot_df["activity_date"].dt.to_period("W-SUN").apply(lambda r: r.start_time)
+    plot_df["Week"] = (
+        plot_df["activity_date"]
+        .dt.tz_localize(None)
+        .dt.to_period("W-SUN")
+        .apply(lambda r: r.start_time)
+    )
     weekly_dist = plot_df.groupby("Week")["distance"].sum().reset_index()
 
     fig_dist = px.bar(
@@ -127,7 +132,7 @@ def _plot_distance(filtered_df):
         title="Total Kilometers per Week",
         labels={"distance": "Distance (km)", "Week": "Week Starting"},
     )
-    st.plotly_chart(fig_dist, use_container_width=True)
+    st.plotly_chart(fig_dist)
 
 
 def _plot_scatter(filtered_df, zones):
@@ -171,7 +176,7 @@ def _plot_scatter(filtered_df, zones):
             annotation_position="top left",
         )
 
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.plotly_chart(fig_scatter)
 
 
 def _plot_zone_distribution(filtered_df, zones):
@@ -226,7 +231,7 @@ def _plot_zone_distribution(filtered_df, zones):
             color_discrete_map=zone_colors,
             category_orders={"HR Zone": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5"]},
         )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        st.plotly_chart(fig_pie)
     else:
         st.info("No data in zones")
 

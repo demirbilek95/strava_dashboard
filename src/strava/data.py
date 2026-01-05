@@ -16,7 +16,7 @@ def load_data():
         if not db_path.exists():
             st.error(
                 f"Database not found at {db_path}. "
-                "Please run: poetry run python src/strava/db/import_all.py"
+                "Please start the dashboard to set up the database."
             )
             return pd.DataFrame()
 
@@ -72,7 +72,7 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
             return pd.DataFrame()
 
         db = DatabaseManager(str(db_path))
-        stream_records = db.get_activity_stream(activity_id)
+        stream_records = db.get_activity_stream(int(activity_id))
 
         if not stream_records:
             return pd.DataFrame()
