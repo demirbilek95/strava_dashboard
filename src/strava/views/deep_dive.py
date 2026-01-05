@@ -304,9 +304,6 @@ def _display_stats(track_df, selected_row):
 
     effort = selected_row.get("relative_effort", "N/A")
     calories = selected_row.get("calories", "N/A")
-    gear = selected_row.get("gear")
-    if pd.isna(gear) or (isinstance(gear, str) and gear.startswith("g") and gear[1:].isdigit()):
-        gear = "N/A"
 
     avg_pace_dec = ((moving_s / 60) / dist_km) if dist_km > 0 else 0
 
@@ -322,23 +319,22 @@ def _display_stats(track_df, selected_row):
 
     st.markdown("---")
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     avg_hr = selected_row.get("average_heart_rate", track_df["HR"].mean())
     max_hr = selected_row.get("max_heart_rate", track_df["HR"].max())
     col1.metric("Avg HR", f"{avg_hr:.0f} bpm")
     col2.metric("Max HR", f"{max_hr:.0f} bpm")
-    col3.metric("Gear", gear)
 
     # Cadence if available
     if "cadence" in track_df.columns:
         # Avoid mean of 0 cadence?
         avg_cadence = track_df[track_df["Is_Moving"]]["cadence"].mean()
-        col4.metric(
+        col3.metric(
             "Avg Cadence",
             f"{avg_cadence:.0f} spm" if pd.notna(avg_cadence) else "N/A",
         )
     else:
-        col4.metric("Avg Cadence", "N/A")
+        col3.metric("Avg Cadence", "N/A")
 
 
 def _render_deep_dive_tabs(track_df, laps_df, zones):

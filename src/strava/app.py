@@ -40,6 +40,7 @@ def handle_authorization(api: StravaAPI, auth_code: str):
             importer.import_all_data(progress_callback=update_progress)
 
         st.success("Import complete! Loading dashboard...")
+        st.cache_data.clear()
         st.rerun()
 
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -109,6 +110,7 @@ def handle_refresh(database: DatabaseManager):
 
             if count > 0:
                 st.sidebar.success(f"Successfully imported {count} new activities!")
+                st.cache_data.clear()
                 st.rerun()
             else:
                 st.sidebar.info("Data is already up to date.")
