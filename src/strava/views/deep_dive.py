@@ -304,7 +304,9 @@ def _display_stats(track_df, selected_row):
 
     effort = selected_row.get("relative_effort", "N/A")
     calories = selected_row.get("calories", "N/A")
-    gear = selected_row.get("gear", "N/A")
+    gear = selected_row.get("gear")
+    if pd.isna(gear) or (isinstance(gear, str) and gear.startswith("g") and gear[1:].isdigit()):
+        gear = "N/A"
 
     avg_pace_dec = ((moving_s / 60) / dist_km) if dist_km > 0 else 0
 

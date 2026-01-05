@@ -1,5 +1,35 @@
 -- Query to get list of activities that have stream data available
-SELECT DISTINCT a.* 
+SELECT DISTINCT 
+    a.activity_id,
+    a.activity_date,
+    a.activity_name,
+    a.activity_type,
+    a.activity_description,
+    a.elapsed_time,
+    a.moving_time,
+    a.distance / 1000.0 as distance,
+    a.max_speed,
+    a.average_speed,
+    a.elevation_gain,
+    a.elevation_loss,
+    a.elevation_low,
+    a.elevation_high,
+    a.max_heart_rate,
+    a.average_heart_rate,
+    a.max_cadence,
+    a.average_cadence,
+    a.max_watts,
+    a.average_watts,
+    a.weighted_average_power,
+    a.calories,
+    a.relative_effort,
+    a.total_work,
+    a.max_temperature,
+    a.average_temperature,
+    a.athlete_weight,
+    a.commute,
+    a.gear,
+    a.filename
 FROM activities a
 INNER JOIN activity_streams s ON a.activity_id = s.activity_id
 ORDER BY a.activity_date DESC

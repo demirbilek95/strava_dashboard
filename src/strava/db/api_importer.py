@@ -96,7 +96,7 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
             "max_watts": api_data.get("max_watts"),
             "average_watts": api_data.get("average_watts"),
             "weighted_average_power": api_data.get("weighted_average_watts"),
-            "calories": api_data.get("kilojoules"),  # Approximation or from detailed
+            "calories": api_data.get("calories") or api_data.get("kilojoules"),  # calories for Run, kilojoules for Bike
             "commute": api_data.get("commute"),
             "gear": api_data.get("gear_id"),
             # Fields not in summary or requiring calculation
