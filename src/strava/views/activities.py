@@ -125,6 +125,9 @@ def _plot_distance(filtered_df):
     )
     weekly_dist = plot_df.groupby("Week")["distance"].sum().reset_index()
 
+    # Convert Week to string for consistent x-axis labeling
+    weekly_dist["Week"] = weekly_dist["Week"].dt.strftime("%Y-%m-%d")
+
     fig_dist = px.bar(
         weekly_dist,
         x="Week",
@@ -132,6 +135,7 @@ def _plot_distance(filtered_df):
         title="Total Kilometers per Week",
         labels={"distance": "Distance (km)", "Week": "Week Starting"},
     )
+    fig_dist.update_layout(xaxis={"type": "category"})
     st.plotly_chart(fig_dist)
 
 
