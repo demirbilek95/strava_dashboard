@@ -1,6 +1,8 @@
 from datetime import timedelta
+
 import streamlit as st
 import plotly.express as px
+from strava.utils.activity_processing import calculate_per_km_hr_data
 
 
 def _filter_and_setup(df):
@@ -134,6 +136,8 @@ def _plot_distance(filtered_df):
         y="distance",
         title="Total Kilometers per Week",
         labels={"distance": "Distance (km)", "Week": "Week Starting"},
+        text="distance",
+        text_auto='.3s'
     )
     fig_dist.update_layout(xaxis={"type": "category"})
     st.plotly_chart(fig_dist)
@@ -142,29 +146,48 @@ def _plot_distance(filtered_df):
 def _plot_scatter(filtered_df, zones):
     z1, z2, z3, z4 = zones
     st.subheader("Pace vs Heart Rate")
-    st.info("Scatter plot of individual activities.")
+    st.info("Scatter plot showing per-kilometer data points, colored by activity.")
 
     if "pace_decimal" not in filtered_df.columns or "average_heart_rate" not in filtered_df.columns:
         return
 
-    scatter_plot_df = filtered_df.dropna(subset=["pace_decimal", "average_heart_rate"])
-    if scatter_plot_df.empty:
+    activities_with_hr = filtered_df.dropna(subset=["average_heart_rate"])
+    if activities_with_hr.empty:
         return
 
-    hover_cols = ["activity_date", "distance", "moving_time"]
-    if "activity_name" in scatter_plot_df.columns:
-        hover_cols.insert(0, "activity_name")
+    # Get per-kilometer HR data
+
+    activity_ids = activities_with_hr["activity_id"].tolist()
+    km_data = calculate_per_km_hr_data(activity_ids, filtered_df)
+
+    if km_data.empty:
+        st.warning("No per-kilometer data available for the selected activities.")
+        return
+
+    # Format activity_date for display
+    km_data["activity_date_str"] = km_data["activity_date"].dt.strftime("%Y-%m-%d")
+
+    # Create hover template
+    hover_cols = ["activity_name", "activity_date_str", "km_segment"]
 
     fig_scatter = px.scatter(
-        scatter_plot_df,
-        x="pace_decimal",
-        y="average_heart_rate",
+        km_data,
+        x="avg_pace",
+        y="avg_hr",
+        color="activity_name",
         hover_data=hover_cols,
-        title="Heart Rate vs Pace with Zones",
-        labels={"pace_decimal": "Pace (min/km)", "average_heart_rate": "Avg HR (bpm)"},
+        title="Heart Rate vs Pace (Per Kilometer) with Zones",
+        labels={
+            "avg_pace": "Pace (min/km)",
+            "avg_hr": "HR (bpm)",
+            "activity_name": "Activity",
+            "activity_date_str": "Date",
+            "km_segment": "Kilometer",
+        },
         range_y=[90, 210],
     )
 
+    # Add HR zone backgrounds
     colors = ["gray", "blue", "green", "orange", "red"]
     limits = [0, z1, z2, z3, z4, 220]
     labels = ["Z1", "Z2", "Z3", "Z4", "Z5"]
@@ -191,7 +214,19 @@ def _plot_zone_distribution(filtered_df, zones):
         st.info("No heart rate data available for the selected period.")
         return
 
-    zone_df = filtered_df.dropna(subset=["average_heart_rate"]).copy()
+    activities_with_hr = filtered_df.dropna(subset=["average_heart_rate"])
+    if activities_with_hr.empty:
+        st.info("No heart rate data available for the selected period.")
+        return
+
+    # Get per-kilometer HR data
+
+    activity_ids = activities_with_hr["activity_id"].tolist()
+    km_data = calculate_per_km_hr_data(activity_ids, filtered_df)
+
+    if km_data.empty:
+        st.warning("No per-kilometer data available for zone distribution.")
+        return
 
     def get_zone(hr):
         if hr <= z1:
@@ -204,7 +239,7 @@ def _plot_zone_distribution(filtered_df, zones):
             return "Zone 4"
         return "Zone 5"
 
-    zone_df["HR Zone"] = zone_df["average_heart_rate"].apply(get_zone)
+    km_data["HR Zone"] = km_data["avg_hr"].apply(get_zone)
 
     zone_colors = {
         "Zone 1": "gray",
@@ -217,13 +252,13 @@ def _plot_zone_distribution(filtered_df, zones):
     metric_choice = st.radio("Distribution Metric", ["Time", "Distance"], horizontal=True)
 
     if metric_choice == "Time":
-        zone_stats = zone_df.groupby("HR Zone")["moving_time"].sum().reset_index()
-        zone_stats["Value"] = zone_stats["moving_time"] / 60
-        title_text = "Time Spent in Zones (based on Activity Avg HR)"
+        zone_stats = km_data.groupby("HR Zone")["elapsed_time_s"].sum().reset_index()
+        zone_stats["Value"] = zone_stats["elapsed_time_s"] / 60
+        title_text = "Time Spent in Zones (Per-Kilometer HR Data)"
     else:
-        zone_stats = zone_df.groupby("HR Zone")["distance"].sum().reset_index()
-        zone_stats["Value"] = zone_stats["distance"]
-        title_text = "Distance Covered in Zones (based on Activity Avg HR)"
+        zone_stats = km_data.groupby("HR Zone")["distance_m"].sum().reset_index()
+        zone_stats["Value"] = zone_stats["distance_m"] / 1000  # Convert to km
+        title_text = "Distance Covered in Zones (Per-Kilometer HR Data)"
 
     if not zone_stats.empty:
         fig_pie = px.pie(

@@ -1,3 +1,5 @@
+from typing import List
+
 import pandas as pd
 
 
@@ -107,3 +109,116 @@ def _calculate_splits(track_df):
         current_km += 1
 
     return pd.DataFrame(splits)
+
+
+def calculate_per_km_hr_data(activity_ids: List[int], filtered_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate average heart rate per kilometer for multiple activities.
+
+    Args:
+        activity_ids: List of activity IDs to process
+        filtered_df: DataFrame with activity summary data
+
+    Returns:
+        DataFrame with columns: activity_id, activity_name, activity_date, km_segment,
+                               avg_hr, avg_pace, distance_m, elapsed_time_s
+    """
+    # Import here to avoid circular imports
+    from strava.data import get_activity_stream  # pylint: disable=import-outside-toplevel
+
+    all_km_data = []
+
+    for activity_id in activity_ids:
+        # Get activity metadata
+        activity_row = filtered_df[filtered_df["activity_id"] == int(activity_id)]
+        if activity_row.empty:
+            continue
+
+        activity_name = activity_row.iloc[0].get("activity_name", f"Activity {activity_id}")
+        activity_date = activity_row.iloc[0].get("activity_date")
+
+        # Try to get stream data
+        stream_df = get_activity_stream(activity_id)
+
+        if stream_df.empty or "heart_rate" not in stream_df.columns:
+            # Fallback: use overall activity average
+            avg_hr = activity_row.iloc[0].get("average_heart_rate")
+            pace = activity_row.iloc[0].get("pace_decimal")
+
+            if pd.notna(avg_hr) and pd.notna(pace):
+                all_km_data.append(
+                    {
+                        "activity_id": activity_id,
+                        "activity_name": activity_name,
+                        "activity_date": activity_date,
+                        "km_segment": 1,
+                        "avg_hr": avg_hr,
+                        "avg_pace": pace,
+                        "distance_m": activity_row.iloc[0].get("distance", 0) * 1000,
+                        "elapsed_time_s": activity_row.iloc[0].get("moving_time", 0),
+                    }
+                )
+            continue
+
+        # Calculate per-kilometer segments
+        max_dist = stream_df["distance"].max() if "distance" in stream_df.columns else 0
+
+        if max_dist == 0:
+            continue
+
+        current_km = 0
+        while current_km * 1000 < max_dist:
+            start_dist = current_km * 1000
+            end_dist = (current_km + 1) * 1000
+
+            # Get data for this 1km segment
+            if end_dist <= max_dist:
+                segment_data = stream_df[
+                    (stream_df["distance"] >= start_dist) & (stream_df["distance"] < end_dist)
+                ].copy()
+
+                if not segment_data.empty and "heart_rate" in segment_data.columns:
+                    # Calculate metrics for this kilometer
+                    avg_hr = segment_data["heart_rate"].dropna().mean()
+
+                    # Calculate actual distance and time
+                    actual_dist_m = (
+                        segment_data["distance"].iloc[-1] - segment_data["distance"].iloc[0]
+                    )
+
+                    # Calculate elapsed time for this segment
+                    if "timestamp" in segment_data.columns:
+                        elapsed_time_s = (
+                            segment_data["timestamp"].iloc[-1] - segment_data["timestamp"].iloc[0]
+                        ).total_seconds()
+                    elif "elapsed_seconds" in segment_data.columns:
+                        elapsed_time_s = (
+                            segment_data["elapsed_seconds"].iloc[-1]
+                            - segment_data["elapsed_seconds"].iloc[0]
+                        )
+                    else:
+                        elapsed_time_s = 0
+
+                    # Calculate pace (min/km)
+                    actual_dist_km = actual_dist_m / 1000
+                    avg_pace = (
+                        (elapsed_time_s / actual_dist_km) / 60 if actual_dist_km > 0 else None
+                    )
+
+                    if pd.notna(avg_hr) and pd.notna(avg_pace):
+                        all_km_data.append(
+                            {
+                                "activity_id": activity_id,
+                                "activity_name": activity_name,
+                                "activity_date": activity_date,
+                                "km_segment": current_km + 1,
+                                "avg_hr": avg_hr,
+                                "avg_pace": avg_pace,
+                                "distance_m": actual_dist_m,
+                                "elapsed_time_s": elapsed_time_s,
+                            }
+                        )
+
+            current_km += 1
+
+    return pd.DataFrame(all_km_data)
