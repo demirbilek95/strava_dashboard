@@ -137,7 +137,7 @@ def _plot_distance(filtered_df):
         title="Total Kilometers per Week",
         labels={"distance": "Distance (km)", "Week": "Week Starting"},
         text="distance",
-        text_auto='.3s'
+        text_auto=".3s",
     )
     fig_dist.update_layout(xaxis={"type": "category"})
     st.plotly_chart(fig_dist)
