@@ -75,6 +75,9 @@ def _plot_weekly_duration(filtered_df):
     # Group by Week and Type
     weekly_type = plot_df.groupby(["Week", "activity_type"])["Duration Minutes"].sum().reset_index()
 
+    # Convert Week to string for consistent x-axis labeling
+    weekly_type["Week"] = weekly_type["Week"].dt.strftime("%Y-%m-%d")
+
     fig_weekly_stack = px.bar(
         weekly_type,
         x="Week",
@@ -87,6 +90,7 @@ def _plot_weekly_duration(filtered_df):
             "activity_type": "Activity Type",
         },
     )
+    fig_weekly_stack.update_layout(xaxis={"type": "category"})
     st.plotly_chart(fig_weekly_stack)
 
 
