@@ -90,7 +90,7 @@ def _plot_weekly_duration(filtered_df):
             "activity_type": "Activity Type",
         },
     )
-    fig_weekly_stack.update_layout(xaxis={"type": "category"})
+    fig_weekly_stack.update_layout(xaxis={"type": "date"})
     st.plotly_chart(fig_weekly_stack)
 
 
