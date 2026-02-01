@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS activities (
     
     -- Other metrics
     athlete_weight REAL,
+    workout_type INTEGER,
     commute BOOLEAN DEFAULT 0,
     gear TEXT,
     filename TEXT,
@@ -146,6 +147,7 @@ SELECT DISTINCT
     a.max_temperature,
     a.average_temperature,
     a.athlete_weight,
+    a.workout_type,
     a.commute,
     a.gear,
     a.filename

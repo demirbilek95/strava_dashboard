@@ -441,7 +441,15 @@ def page_recent_activities(_, zones):
         axis=1,
     ).tolist()
 
-    selected_option = st.selectbox("Select Activity", options)
+    # Handle pre-selected activity from other pages
+    default_index = 0
+    if "selected_activity_id" in st.session_state:
+        requested_id = st.session_state.pop("selected_activity_id")
+        matches = available_activities[available_activities["activity_id"] == requested_id]
+        if not matches.empty:
+            default_index = available_activities.index.get_loc(matches.index[0])
+
+    selected_option = st.selectbox("Select Activity", options, index=default_index)
     if not selected_option:
         return
 
