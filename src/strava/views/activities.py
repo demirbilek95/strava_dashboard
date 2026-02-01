@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 import streamlit as st
+import pandas as pd
 import plotly.express as px
 from strava.utils.activity_processing import calculate_per_km_hr_data
 
@@ -126,6 +127,19 @@ def _plot_distance(filtered_df):
         .apply(lambda r: r.start_time)
     )
     weekly_dist = plot_df.groupby("Week")["distance"].sum().reset_index()
+
+    # Generate complete date range to fill gaps
+    if not weekly_dist.empty:
+        min_week = weekly_dist["Week"].min()
+        max_week = weekly_dist["Week"].max()
+
+        # Create complete weekly range
+        all_weeks = pd.date_range(start=min_week, end=max_week, freq="W-MON")
+        complete_weeks_df = pd.DataFrame({"Week": all_weeks})
+
+        # Merge with actual data and fill missing weeks with 0
+        weekly_dist = complete_weeks_df.merge(weekly_dist, on="Week", how="left")
+        weekly_dist["distance"] = weekly_dist["distance"].fillna(0)
 
     # Convert Week to string for consistent x-axis labeling
     weekly_dist["Week"] = weekly_dist["Week"].dt.strftime("%Y-%m-%d")
