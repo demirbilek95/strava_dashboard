@@ -1,7 +1,7 @@
 from pathlib import Path
 import streamlit as st
 import pandas as pd
-from db.db_manager import DatabaseManager  # pylint: disable=import-error
+from strava.db.db_manager import DatabaseManager  # pylint: disable=import-error
 
 
 @st.cache_data
@@ -36,7 +36,13 @@ def load_data():
         df["activity_date"] = pd.to_datetime(df["activity_date"])
 
         # Ensure commute column is boolean
-        df["commute"] = df["commute"].astype(bool)
+        if "commute" in df.columns:
+            df["commute"] = df["commute"].astype(bool)
+
+        # Handle workout_type (ensure it's in the dataframe)
+        if "workout_type" not in df.columns:
+            # This might happen if the cache is old or SQL failed to include it
+            df["workout_type"] = None
 
         # Pre-calculate pace_decimal for the entire dataset
         if "moving_time" in df.columns and "distance" in df.columns:

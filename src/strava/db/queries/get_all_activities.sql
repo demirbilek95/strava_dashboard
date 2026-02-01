@@ -30,6 +30,7 @@ SELECT
     max_temperature,
     average_temperature,
     athlete_weight,
+    workout_type,
     commute,
     gear,
     filename
