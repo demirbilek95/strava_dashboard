@@ -156,20 +156,18 @@ def main():
     # Navigation
     st.sidebar.title("Navigation")
     page_options = ["General Overview", "Activity Run Details", "Deep Dive", "Races"]
-    
+
     # Handle navigation from other pages
     if "requested_page" in st.session_state:
         st.session_state["active_page"] = st.session_state.pop("requested_page")
-    
+
     if "active_page" not in st.session_state:
         st.session_state["active_page"] = page_options[0]
 
     # Set default index or index based on requested page
     default_idx = page_options.index(st.session_state["active_page"])
-        
-    page = st.sidebar.radio(
-        "Go to", page_options, index=default_idx
-    )
+
+    page = st.sidebar.radio("Go to", page_options, index=default_idx)
     st.session_state["active_page"] = page
 
     handle_refresh(database)
