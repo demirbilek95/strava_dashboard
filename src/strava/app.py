@@ -7,6 +7,7 @@ from strava.views.general import page_general
 from strava.views.activities import page_activity_run_details
 from strava.views.races import page_races
 from strava.views.deep_dive import page_recent_activities
+from strava.views.training_plan import page_ai_training_plan
 
 # Set page config
 st.set_page_config(page_title="Strava Analytics", layout="wide")
@@ -155,20 +156,23 @@ def main():
 
     # Navigation
     st.sidebar.title("Navigation")
-    page_options = ["General Overview", "Activity Run Details", "Deep Dive", "Races"]
+    page_options = ["General Overview", "Activity Run Details", "Deep Dive", "Races", "AI Training Plan"]
 
     # Handle navigation from other pages
     if "requested_page" in st.session_state:
         st.session_state["active_page"] = st.session_state.pop("requested_page")
 
+    # Layout: Sidebar
+    st.sidebar.title("Navigation")
+    
+    # helper for radio button
+    # If active_page is not set, default to first option
     if "active_page" not in st.session_state:
-        st.session_state["active_page"] = page_options[0]
-
-    # Set default index or index based on requested page
-    default_idx = page_options.index(st.session_state["active_page"])
-
-    page = st.sidebar.radio("Go to", page_options, index=default_idx)
-    st.session_state["active_page"] = page
+        st.session_state.active_page = page_options[0]
+        
+    # We use the key="active_page" to automatically sync with session_state
+    # No need to manually set index or update session_state manually unless forcing a change
+    page = st.sidebar.radio("Go to", page_options, key="active_page")
 
     handle_refresh(database)
 
@@ -190,6 +194,8 @@ def main():
         page_recent_activities(dataframe, zones)
     elif page == "Races":
         page_races(dataframe, zones)
+    elif page == "AI Training Plan":
+        page_ai_training_plan(dataframe)
 
 
 if __name__ == "__main__":
