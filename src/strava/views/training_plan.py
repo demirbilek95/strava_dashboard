@@ -49,10 +49,24 @@ def get_recent_activities_summary(df: pd.DataFrame) -> str:
             if pd.notnull(row.get("average_heart_rate"))
             else "N/A"
         )
-
-        summary.append(
-            f"- {date_str}: {type_} - {name}, Dist: {dist}, Pace: {pace}, Avg HR: {avg_hr}"
+        max_hr = (
+            f"{int(row['max_heart_rate'])} max" if pd.notnull(row.get("max_heart_rate")) else ""
         )
+
+        elev = f"{int(row['elevation_gain'])}m" if pd.notnull(row.get("elevation_gain")) else "0m"
+
+        cadence = (
+            f"{int(row['average_cadence'])}spm" if pd.notnull(row.get("average_cadence")) else ""
+        )
+
+        # Assemble details
+        details = [f"Dist: {dist}", f"Pace: {pace}", f"Elev: {elev}"]
+        if avg_hr != "N/A":
+            details.append(f"HR: {avg_hr} {max_hr}")
+        if cadence:
+            details.append(f"Cad: {cadence}")
+
+        summary.append(f"- {date_str}: {type_} - {name}, {', '.join(details)}")
 
     return "\n".join(summary)
 
@@ -119,58 +133,108 @@ def get_race_summary(df: pd.DataFrame) -> str:
             if pd.notnull(row.get("average_heart_rate"))
             else "N/A"
         )
-        
-        summary.append(f"- {date_str}: {name}, Time: {time_str}, Dist: {dist}, Pace: {pace}, Avg HR: {avg_hr}")
+
+        summary.append(
+            f"- {date_str}: {name}, Time: {time_str}, Dist: {dist}, Pace: {pace}, Avg HR: {avg_hr}"
+        )
 
     return "\n".join(summary)
 
 
-def page_ai_training_plan(dataframe: pd.DataFrame):
+def page_ai_training_plan(dataframe: pd.DataFrame):  # pylint: disable=too-many-branches, too-many-statements
     st.header("🤖 AI Coach Training Plan")
     st.markdown(
         "Generate a personalized training plan using Google's Gemini AI, based on your recent Strava history."
     )
 
-    col1, _ = st.columns([1, 1])
+    # Initialize session state for chat and plan
+    if "ai_plan" not in st.session_state:
+        st.session_state.ai_plan = None
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    if "gemini_chat" not in st.session_state:
+        st.session_state.gemini_chat = None
 
-    with col1:
-        user_goal = st.text_area(
-            "What is your running goal?",
-            height=100,
-            placeholder="e.g. I want to run a sub-4 hour marathon in 3 months. I train 4 times a week.",
-        )
+    # 1. Input Section (Show only if no plan generated yet)
+    if not st.session_state.ai_plan:
+        col1, _ = st.columns([1, 1])
+        with col1:
+            user_goal = st.text_area(
+                "What is your running goal?",
+                height=100,
+                placeholder="e.g. I want to run a sub-4 hour marathon in 3 months. I train 4 times a week.",
+            )
 
-    generate_btn = st.button("Generate Training Plan", type="primary")
+        generate_btn = st.button("Generate Training Plan", type="primary")
 
-    if generate_btn:
-        if not user_goal:
-            st.error("Please enter a goal first.")
-            return
+        if generate_btn:
+            if not user_goal:
+                st.error("Please enter a goal first.")
+                return
 
-        with st.spinner("Analyzing your activity data and generating plan..."):
-            # 1. Prepare Data
-            recent_activity_summary = get_recent_activities_summary(dataframe)
-            race_summary = get_race_summary(dataframe)
+            with st.spinner("Analyzing your activity data and generating plan..."):
+                # Prepare Data
+                recent_activity_summary = get_recent_activities_summary(dataframe)
+                race_summary = get_race_summary(dataframe)
 
-            # Debug/Info expander
-            with st.expander("See data sent to AI"):
-                st.text("Recent Activities:")
-                st.text(recent_activity_summary)
-                st.divider()
-                st.text("Races:")
-                st.text(race_summary)
-
-            # 2. Call AI
-            try:
+                # Call AI
                 coach = AICoach()
-                plan = coach.generate_training_plan(
+                chat, plan_text = coach.start_training_chat(
                     user_goal, recent_activity_summary, race_summary
                 )
 
-                st.success("Plan Generated!")
-                st.markdown("### 📋 Your Personalized Plan")
-                st.markdown(plan)
+                if chat and plan_text:
+                    # Success
+                    st.session_state.ai_plan = plan_text
+                    st.session_state.gemini_chat = chat
+                    # Add simple welcome message to history using the plan
+                    st.session_state.chat_history.append(
+                        {"role": "assistant", "content": plan_text}
+                    )
+                    st.rerun()
+                else:
+                    # Error (plan_text contains error message)
+                    st.error(plan_text)
+                    st.info("Please check if your GOOGLE_API_KEY is set correctly in .env")
 
-            except Exception as e:
-                st.error(f"Failed to generate plan: {e}")
-                st.info("Please check if your GOOGLE_API_KEY is set correctly in .env")
+    # 2. Results & Chat Section (Show if plan exists)
+    else:
+        # Option to reset
+        if st.button("🔄 Start Over / New Goal"):
+            st.session_state.ai_plan = None
+            st.session_state.chat_history = []
+            st.session_state.gemini_chat = None
+            st.rerun()
+
+        st.divider()
+
+        # Display Chat History
+        # We iterate through history. The first message is the plan.
+        for message in st.session_state.chat_history:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        # Chat Input
+        if prompt := st.chat_input("Ask a follow-up question to your coach..."):
+            # Add user message to state
+            st.session_state.chat_history.append({"role": "user", "content": prompt})
+            # Display user message immediately
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Get response from Gemini
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    try:
+                        chat = st.session_state.gemini_chat
+                        # If for some reason chat object is lost (unlikely in memory session), handle it
+                        if not chat:
+                            st.error("Connection lost. Please regenerate the plan.")
+                        else:
+                            response = chat.send_message(prompt)
+                            st.markdown(response.text)
+                            st.session_state.chat_history.append(
+                                {"role": "assistant", "content": response.text}
+                            )
+                    except Exception as e:  # pylint: disable=broad-exception-caught
+                        st.error(f"Error: {e}")
