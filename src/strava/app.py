@@ -156,20 +156,20 @@ def main():
 
     # Navigation
     st.sidebar.title("Navigation")
-    page_options = ["General Overview", "Activity Run Details", "Deep Dive", "Races", "AI Training Plan"]
+    page_options = ["General Overview", "Activity Run Details", "Deep Dive", "Races", "AI Coach"]
 
     # Handle navigation from other pages
     if "requested_page" in st.session_state:
         st.session_state["active_page"] = st.session_state.pop("requested_page")
 
-    # Layout: Sidebar
-    st.sidebar.title("Navigation")
-    
+
+
+
     # helper for radio button
     # If active_page is not set, default to first option
     if "active_page" not in st.session_state:
         st.session_state.active_page = page_options[0]
-        
+
     # We use the key="active_page" to automatically sync with session_state
     # No need to manually set index or update session_state manually unless forcing a change
     page = st.sidebar.radio("Go to", page_options, key="active_page")
@@ -194,8 +194,8 @@ def main():
         page_recent_activities(dataframe, zones)
     elif page == "Races":
         page_races(dataframe, zones)
-    elif page == "AI Training Plan":
-        page_ai_training_plan(dataframe)
+    elif page == "AI Coach":
+        page_ai_training_plan(dataframe, database)
 
 
 if __name__ == "__main__":

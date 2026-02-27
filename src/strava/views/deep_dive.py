@@ -165,7 +165,9 @@ def _render_plots(track_df, zones):
     )
     fig.update_yaxes(title_text="Heart Rate (bpm)", row=3, col=1)
 
-    fig.update_layout(height=700, hovermode="x unified", showlegend=True)
+    fig.update_layout(height=700, 
+                      hovermode="x unified", 
+                      showlegend=True)
     st.plotly_chart(fig)
 
 
