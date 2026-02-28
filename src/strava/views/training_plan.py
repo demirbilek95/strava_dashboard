@@ -183,9 +183,55 @@ def _show_active_plan(database: DatabaseManager, active_plan: dict):
     if active_plan.get("raw_llm_response"):
         with st.expander("View full plan"):
             st.markdown(active_plan["raw_llm_response"])
-    if st.button("📝 Create New Plan (archives current)", key="new_plan_btn"):
-        database.archive_plan(active_plan["plan_id"])
-        st.rerun()
+            
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📝 Create New Plan (archives current)", key="new_plan_btn"):
+            database.archive_plan(active_plan["plan_id"])
+            st.rerun()
+    with col2:
+        if st.button("🔄 Adapt Plan", key="adapt_plan_btn"):
+            st.session_state.is_adapting = True
+            st.rerun()
+
+def _show_adapt_input(database: DatabaseManager, active_plan: dict):
+    """Show input form for adapting an existing plan."""
+    st.markdown("### 🔄 Adapt Your Plan")
+    st.info("Tell the AI Coach what changed. For example: 'I missed my long run on Sunday, can we move it to Tuesday?'")
+    adapt_request = st.text_area("What would you like to change?", key="adapt_input")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🚀 Adapt Plan", type="primary"):
+            if not adapt_request:
+                st.error("Please enter your request first.")
+                return
+
+            with st.spinner("🤖 AI Coach is analyzing and adapting your plan..."):
+                zones = [
+                    st.session_state.get("global_z1", 145),
+                    st.session_state.get("global_z2", 164),
+                    st.session_state.get("global_z3", 174),
+                    st.session_state.get("global_z4", 188),
+                ]
+                coach = AICoach(database, hr_zones=zones)
+                chat, plan_text = coach.adapt_plan(adapt_request)
+
+                if chat and plan_text:
+                    st.session_state.draft_plan_text = plan_text
+                    st.session_state.draft_plan_json = AICoach.parse_plan_json(plan_text)
+                    st.session_state.gemini_chat = chat
+                    st.session_state.user_goal = active_plan["goal"]
+                    st.session_state.chat_history = [{"role": "assistant", "content": plan_text}]
+                    st.session_state.is_adapting = False
+                    st.session_state.adapting_plan_id = active_plan["plan_id"]
+                    st.rerun()
+                else:
+                    st.error(plan_text)
+    with col2:
+        if st.button("Cancel"):
+            st.session_state.is_adapting = False
+            st.rerun()
 
 
 def _show_goal_input(database: DatabaseManager):
@@ -235,6 +281,10 @@ def _handle_accept(database: DatabaseManager):
         return
 
     with st.spinner("Saving plan to database..."):
+        if st.session_state.get("adapting_plan_id"):
+            database.archive_plan(st.session_state.adapting_plan_id)
+            st.session_state.adapting_plan_id = None
+            
         plan_id = database.insert_training_plan(
             {
                 "goal": st.session_state.user_goal,
@@ -322,7 +372,10 @@ def _tab_generate_plan(database: DatabaseManager, _dataframe: pd.DataFrame):
 
     # If there's already an accepted plan in the DB
     if active_plan and not st.session_state.draft_plan_text:
-        _show_active_plan(database, active_plan)
+        if st.session_state.get("is_adapting"):
+            _show_adapt_input(database, active_plan)
+        else:
+            _show_active_plan(database, active_plan)
         return
 
     # No draft yet — show goal input

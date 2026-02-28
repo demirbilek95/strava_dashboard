@@ -506,6 +506,60 @@ Derive paces and heart rate zones from their ACTUAL data, not generic tables."""
         except Exception as exc:  # pylint: disable=broad-exception-caught
             return None, f"Error generating plan: {str(exc)}"
 
+    def adapt_plan(self, user_request: str) -> Tuple[Optional[object], str]:
+        """Adapt the existing training plan based on user request.
+        
+        Returns (chat_session, plan_text).
+        """
+        current_date = datetime.date.today().strftime("%Y-%m-%d")
+
+        system_prompt = f"""You are an expert running coach. Today is {current_date}.
+
+Your Mission:
+- The athlete already has an active training plan. 
+- Use the get_current_plan tool to see their current plan.
+- Use get_recent_activities to see what they have actually done recently.
+- They are asking to change or adapt their plan: "{user_request}"
+- Analyze their progress and provide an updated, adapted plan.
+
+IMPORTANT: After your analysis, provide the updated training plan in TWO parts:
+1. A human-readable explanation (what you changed and why).
+2. A JSON block wrapped in ```json ... ``` containing the NEW structured plan (including both past completed workouts as they were, and the new future workouts) in this exact format:
+```json
+{{
+  "start_date": "YYYY-MM-DD",
+  "end_date": "YYYY-MM-DD",
+  "weeks": [
+    {{
+      "week_number": 1,
+      "workouts": [
+        {{
+          "day": "Monday",
+          "date": "YYYY-MM-DD",
+          "type": "easy_run|tempo|intervals|long_run|rest|cross_training|recovery",
+          "description": "Easy recovery run, Zone 2",
+          "distance_km": 6.0,
+          "duration_min": 36,
+          "pace_min_km": 6.0,
+          "hr_zone": "Zone 2"
+        }}
+      ]
+    }}
+  ]
+}}
+```
+Ensure you keep the workouts from the past unmodified (unless the user explicitly asks to change historical data) and only shift/adapt the future workouts. Include ALL days."""
+
+        chat = self.client.chats.create(model=self.model_id, config={"tools": self.tools})
+
+        try:
+            response = chat.send_message(system_prompt)
+            response, final_text = self._handle_tool_loop(chat, response)
+            return chat, final_text
+
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            return None, f"Error adapting plan: {str(exc)}"
+
     def chat(self, chat_session: object, message: str) -> str:
         """Send a follow-up message in an existing chat session.
 
