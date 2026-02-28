@@ -307,15 +307,64 @@ def _handle_accept(database: DatabaseManager):
     st.rerun()
 
 
-def _show_draft_review(database: DatabaseManager):
+def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
     """Show draft plan preview with chat and accept/regenerate buttons."""
     st.markdown("### 📋 Draft Training Plan")
     st.caption("Review the plan below. You can ask follow-up questions or request changes.")
 
+    # Show Calendar of the current draft
+    plan_json = st.session_state.draft_plan_json
+    if plan_json and "weeks" in plan_json:
+        workouts = AICoach.plan_json_to_workouts(0, plan_json)
+        
+        today = datetime.date.today()
+        default_year, default_month = today.year, today.month
+        if workouts:
+            valid_dates = [w["workout_date"] for w in workouts if w.get("workout_date")]
+            if valid_dates:
+                first_date = min(valid_dates)
+                try:
+                    dt = datetime.date.fromisoformat(first_date)
+                    default_year, default_month = dt.year, dt.month
+                except ValueError:
+                    pass
+            
+        col1, _, col3 = st.columns([1, 2, 1])
+        with col1:
+            if st.button("◀ Previous", key="draft_cal_prev"):
+                if "draft_cal_month" not in st.session_state:
+                    st.session_state.draft_cal_month = default_month
+                    st.session_state.draft_cal_year = default_year
+                st.session_state.draft_cal_month -= 1
+                if st.session_state.draft_cal_month < 1:
+                    st.session_state.draft_cal_month = 12
+                    st.session_state.draft_cal_year -= 1
+                st.rerun()
+        with col3:
+            if st.button("Next ▶", key="draft_cal_next"):
+                if "draft_cal_month" not in st.session_state:
+                    st.session_state.draft_cal_month = default_month
+                    st.session_state.draft_cal_year = default_year
+                st.session_state.draft_cal_month += 1
+                if st.session_state.draft_cal_month > 12:
+                    st.session_state.draft_cal_month = 1
+                    st.session_state.draft_cal_year += 1
+                st.rerun()
+
+        year = st.session_state.get("draft_cal_year", default_year)
+        month = st.session_state.get("draft_cal_month", default_month)
+        
+        _render_calendar(year, month, workouts, dataframe)
+        st.divider()
+
     # Display chat history
+    import re
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            # Hide the JSON block from the output text
+            content = re.sub(r'```json\s*.*?\s*```', '', msg["content"], flags=re.DOTALL)
+            if content.strip():
+                st.markdown(content.strip())
 
     # Chat input for follow-ups
     if prompt := st.chat_input("Ask a follow-up or request changes..."):
@@ -325,7 +374,13 @@ def _show_draft_review(database: DatabaseManager):
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                coach = AICoach(database)
+                zones = [
+                    st.session_state.get("global_z1", 145),
+                    st.session_state.get("global_z2", 164),
+                    st.session_state.get("global_z3", 174),
+                    st.session_state.get("global_z4", 188),
+                ]
+                coach = AICoach(database, hr_zones=zones)
                 chat = st.session_state.gemini_chat
                 if chat:
                     reply = coach.chat(chat, prompt)
@@ -354,7 +409,7 @@ def _show_draft_review(database: DatabaseManager):
             st.rerun()
 
 
-def _tab_generate_plan(database: DatabaseManager, _dataframe: pd.DataFrame):
+def _tab_generate_plan(database: DatabaseManager, dataframe: pd.DataFrame):
     """Plan generation tab with preview → accept flow."""
     # Session state init
     for key, default in [
@@ -384,7 +439,7 @@ def _tab_generate_plan(database: DatabaseManager, _dataframe: pd.DataFrame):
         return
 
     # Draft exists — show preview + chat + accept/regenerate
-    _show_draft_review(database)
+    _show_draft_review(database, dataframe)
 
 
 # ── Tab 2: Calendar View ────────────────────────────────────────────
