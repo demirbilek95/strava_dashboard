@@ -74,7 +74,7 @@ class DatabaseManager:
         with self.get_connection() as conn:
             conn.executescript(schema_sql)
 
-        print(f"✓ Database tables created at {self.db_path}")
+        # Removed redundant print statement
         self._migrate_schema()
 
     def _migrate_schema(self):
