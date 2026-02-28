@@ -29,11 +29,12 @@ class StravaAPI:
         self.refresh_token = os.getenv("STRAVA_REFRESH_TOKEN")
 
         self.access_token = access_token or os.getenv("STRAVA_ACCESS_TOKEN")
-        if not self.access_token:
-            raise ValueError("Strava access token is required")
+        # Removing strict requirement for access token at initialization
+        # as it may be needed to generate authorization URL before tokens are acquired.
 
         self.session = requests.Session()
-        self._update_session_header()
+        if self.access_token:
+            self._update_session_header()
 
     def _update_session_header(self):
         """Update the session header with the current access token."""
