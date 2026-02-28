@@ -205,7 +205,13 @@ def _show_goal_input(database: DatabaseManager):
             return
 
         with st.spinner("🤖 AI Coach is analyzing your data and building a plan..."):
-            coach = AICoach(database)
+            zones = [
+                st.session_state.get("global_z1", 145),
+                st.session_state.get("global_z2", 164),
+                st.session_state.get("global_z3", 174),
+                st.session_state.get("global_z4", 188),
+            ]
+            coach = AICoach(database, hr_zones=zones)
             chat, plan_text = coach.generate_plan(user_goal)
 
             if chat and plan_text:
@@ -423,7 +429,13 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
 
     if st.button("🔍 Analyze My Week", type="primary", key="analyze_btn"):
         with st.spinner("🤖 Coach is reviewing your training data..."):
-            coach = AICoach(database)
+            zones = [
+                st.session_state.get("global_z1", 145),
+                st.session_state.get("global_z2", 164),
+                st.session_state.get("global_z3", 174),
+                st.session_state.get("global_z4", 188),
+            ]
+            coach = AICoach(database, hr_zones=zones)
             analysis = coach.analyze_adherence()
             st.session_state["adherence_analysis"] = analysis
 
@@ -469,9 +481,17 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                coach = AICoach(database)
+                zones = [
+                    st.session_state.get("global_z1", 145),
+                    st.session_state.get("global_z2", 164),
+                    st.session_state.get("global_z3", 174),
+                    st.session_state.get("global_z4", 188),
+                ]
+                coach = AICoach(database, hr_zones=zones)
                 if not st.session_state.feedback_chat:
-                    chat = coach.model.start_chat(history=[])
+                    chat = coach.client.chats.create(
+                        model=coach.model_id, config={"tools": coach.tools}
+                    )
                     st.session_state.feedback_chat = chat
 
                 reply = coach.chat(st.session_state.feedback_chat, prompt)

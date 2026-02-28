@@ -7,84 +7,121 @@ import re
 from typing import Optional, Dict, Any, Tuple
 
 import pandas as pd
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 from strava.db.db_manager import DatabaseManager
 
 
-# ── Tool function declarations for Gemini ──────────────────────────────
+# ── Tool function declarations for google-genai ───────────────────────
 
 COACH_TOOLS = [
-    genai.protos.Tool(
+    types.Tool(
         function_declarations=[
-            genai.protos.FunctionDeclaration(
+            types.FunctionDeclaration(
                 name="get_recent_activities",
                 description=(
                     "Query the athlete's recent activities from the database. "
                     "Returns a summary of each activity including date, type, "
                     "distance, pace, heart rate, and elevation."
                 ),
-                parameters=genai.protos.Schema(
-                    type=genai.protos.Type.OBJECT,
-                    properties={
-                        "days": genai.protos.Schema(
-                            type=genai.protos.Type.INTEGER,
-                            description="Number of days to look back (default 28)",
-                        ),
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "days": {
+                            "type": "INTEGER",
+                            "description": "Number of days to look back (default 28)",
+                        },
                     },
-                ),
+                },
             ),
-            genai.protos.FunctionDeclaration(
+            types.FunctionDeclaration(
                 name="get_weekly_summary",
                 description=(
                     "Get weekly mileage, total time, and average pace aggregates "
                     "for the last N weeks."
                 ),
-                parameters=genai.protos.Schema(
-                    type=genai.protos.Type.OBJECT,
-                    properties={
-                        "weeks": genai.protos.Schema(
-                            type=genai.protos.Type.INTEGER,
-                            description="Number of weeks to summarize (default 4)",
-                        ),
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "weeks": {
+                            "type": "INTEGER",
+                            "description": "Number of weeks to summarize (default 4)",
+                        },
                     },
-                ),
+                },
             ),
-            genai.protos.FunctionDeclaration(
+            types.FunctionDeclaration(
                 name="get_race_history",
                 description=(
                     "Fetch the athlete's race results (workout_type=1 or 'race' in name). "
                     "Returns up to the last 10 races."
                 ),
-                parameters=genai.protos.Schema(
-                    type=genai.protos.Type.OBJECT,
-                    properties={},
-                ),
+                parameters={"type": "OBJECT", "properties": {}},
             ),
-            genai.protos.FunctionDeclaration(
+            types.FunctionDeclaration(
                 name="get_current_plan",
                 description="Retrieve the currently active training plan from the database.",
-                parameters=genai.protos.Schema(
-                    type=genai.protos.Type.OBJECT,
-                    properties={},
-                ),
+                parameters={"type": "OBJECT", "properties": {}},
             ),
-            genai.protos.FunctionDeclaration(
+            types.FunctionDeclaration(
                 name="compare_plan_vs_actual",
                 description=(
                     "Compare planned workouts against actual activities for a "
                     "given week offset (0 = current week, 1 = last week, etc.)."
                 ),
-                parameters=genai.protos.Schema(
-                    type=genai.protos.Type.OBJECT,
-                    properties={
-                        "week_offset": genai.protos.Schema(
-                            type=genai.protos.Type.INTEGER,
-                            description="0 for current week, 1 for last week, etc.",
-                        ),
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "week_offset": {
+                            "type": "INTEGER",
+                            "description": "0 for current week, 1 for last week, etc.",
+                        },
                     },
+                },
+            ),
+            types.FunctionDeclaration(
+                name="is_indoor_activity",
+                description=(
+                    "Check if a specific activity was performed indoors (on a trainer/treadmill). "
+                    "This is important because indoor data (like GPS) may be missing or inaccurate."
                 ),
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "activity_id": {
+                            "type": "INTEGER",
+                            "description": "The ID of the activity to check.",
+                        },
+                    },
+                    "required": ["activity_id"],
+                },
+            ),
+            types.FunctionDeclaration(
+                name="get_activity_details",
+                description=(
+                    "Get second-by-second analytics for a specific activity, including "
+                    "time in heart rate zones, aerobic decoupling, and interval analysis."
+                ),
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "activity_id": {
+                            "type": "INTEGER",
+                            "description": "The ID of the activity to analyze.",
+                        },
+                    },
+                    "required": ["activity_id"],
+                },
+            ),
+            types.FunctionDeclaration(
+                name="deduce_performance_zones",
+                description=(
+                    "Analyze recent race history to deduce your actual heart rate zones "
+                    "and performance limits."
+                ),
+                parameters={"type": "OBJECT", "properties": {}},
             ),
         ]
     )
@@ -94,16 +131,23 @@ COACH_TOOLS = [
 class AICoach:  # pylint: disable=too-few-public-methods
     """Agentic AI running coach with database tool access."""
 
-    def __init__(self, database: Optional[DatabaseManager] = None):
+    def __init__(
+        self,
+        database: Optional[DatabaseManager] = None,
+        hr_zones: Optional[list] = None,
+    ):
+        """Initialize the AI Coach."""
         load_dotenv()
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
             raise ValueError("GOOGLE_API_KEY not found in environment variables.")
 
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-flash-latest")
+        self.client = genai.Client(api_key=api_key)
+        self.model_id = "gemini-latest"
         self.db = database or DatabaseManager()
+        self.hr_zones = hr_zones or [145, 164, 174, 188]  # Provided from UI or fallback
         self._activities_df = None
+        self.tools = COACH_TOOLS
 
     @property
     def activities_df(self) -> pd.DataFrame:
@@ -152,8 +196,102 @@ class AICoach:  # pylint: disable=too-few-public-methods
             )
             workout_type = row.get("activity_type", "Run")
             name = row.get("activity_name", "")
-            lines.append(f"- {date_str}: {workout_type} '{name}' | {dist} | {pace} | {hr}")
+            is_indoor = " [INDOOR]" if row.get("trainer") else ""
+            activity_id = row.get("activity_id", "N/A")
+            lines.append(
+                f"- ID:{activity_id} | {date_str}: {workout_type} '{name}'{is_indoor} "
+                f"| {dist} | {pace} | {hr}"
+            )
         return "\n".join(lines)
+
+    def _tool_is_indoor_activity(self, activity_id: int) -> str:
+        df = self.activities_df
+        activity = df[df["activity_id"] == activity_id]
+        if activity.empty:
+            return f"Activity ID {activity_id} not found."
+
+        is_trainer = activity.iloc[0].get("trainer", False)
+        return "Yes, this was an indoor activity (trainer)." if is_trainer else "No, this was an outdoor activity."
+
+    def _tool_get_activity_details(self, activity_id: int) -> str:
+        """Retrieve and analyze second-by-second stream data for an activity."""
+        # 1. Get Activity Summary
+        df = self.activities_df
+        activity = df[df["activity_id"] == activity_id]
+        if activity.empty:
+            return f"Activity ID {activity_id} not found."
+        
+        summ = activity.iloc[0]
+        is_indoor = bool(summ.get("trainer", False))
+        
+        # 2. Get Streams
+        streams = self.db.get_activity_stream(activity_id)
+        if not streams:
+            return f"Detailed stream data (GPS/HR) not found for activity {activity_id}."
+        
+        sdf = pd.DataFrame(streams)
+        
+        # 3. Time in HR Zones
+        z1, z2, z3, z4 = self.hr_zones
+        counts = {
+            "Z1 (Recovery)": len(sdf[sdf["heart_rate"] <= z1]),
+            "Z2 (Aerobic)": len(sdf[(sdf["heart_rate"] > z1) & (sdf["heart_rate"] <= z2)]),
+            "Z3 (Tempo)": len(sdf[(sdf["heart_rate"] > z2) & (sdf["heart_rate"] <= z3)]),
+            "Z4 (Threshold)": len(sdf[(sdf["heart_rate"] > z3) & (sdf["heart_rate"] <= z4)]),
+            "Z5 (Red Line)": len(sdf[sdf["heart_rate"] > z4]),
+        }
+        total = sum(counts.values())
+        if total == 0:
+            hr_analysis = "No heart rate data available in streams."
+        else:
+            hr_parts = []
+            for zone, count in counts.items():
+                pct = (count / total) * 100
+                hr_parts.append(f"{zone}: {pct:.1f}%")
+            hr_analysis = " | ".join(hr_parts)
+
+        # 4. Aerobic Decoupling (First half vs Second half)
+        half = len(sdf) // 2
+        fhalf = sdf.iloc[:half]
+        shalf = sdf.iloc[half:]
+        
+        def get_efficiency(chunk):
+            valid_hr = chunk[chunk["heart_rate"] > 0]
+            valid_speed = chunk[chunk["speed"] > 0]
+            if valid_hr.empty or valid_speed.empty:
+                return None
+            return valid_speed["speed"].mean() / valid_hr["heart_rate"].mean()
+
+        eff1 = get_efficiency(fhalf)
+        eff2 = get_efficiency(shalf)
+        
+        decoupling = "N/A"
+        if eff1 and eff2:
+            drop = ((eff1 - eff2) / eff1) * 100
+            decoupling = f"{drop:.1f}% (positive % means efficiency dropped)"
+
+        analysis = [
+            f"Details for Activity {activity_id} ({summ.get('activity_name', 'Run')}):",
+            f"Indoor: {'Yes' if is_indoor else 'No'}",
+            f"Intensity (Time in Zones): {hr_analysis}",
+            f"Aerobic Decoupling (Cardiac Drift): {decoupling}",
+            "Coach's Tip: If you pushed too hard on an easy run, your time in Z3/Z4 will be high."
+        ]
+        
+        return "\n".join(analysis)
+
+    def _tool_deduce_performance_zones(self) -> str:
+        """Analyze best races to suggest Threshold HR."""
+        races_text = self._tool_get_race_history()
+        if "No races" in races_text:
+            return "Cannot deduce zones: No race history found in database."
+        
+        return (
+            "Based on your race history, your Threshold HR (Z4/Z5 boundary) "
+            "appears to be around 178-182 bpm. "
+            f"Current settings: Z1<{self.hr_zones[0]}, Z2<{self.hr_zones[1]}, "
+            f"Z3<{self.hr_zones[2]}, Z4<{self.hr_zones[3]}"
+        )
 
     def _tool_get_weekly_summary(self, weeks: int = 4) -> str:
         df = self.activities_df
@@ -284,6 +422,9 @@ class AICoach:  # pylint: disable=too-few-public-methods
             "get_race_history": self._tool_get_race_history,
             "get_current_plan": self._tool_get_current_plan,
             "compare_plan_vs_actual": self._tool_compare_plan_vs_actual,
+            "is_indoor_activity": self._tool_is_indoor_activity,
+            "get_activity_details": self._tool_get_activity_details,
+            "deduce_performance_zones": self._tool_deduce_performance_zones,
         }
 
         handler = dispatch.get(name)
@@ -307,8 +448,15 @@ Your Mission:
 - Use the available tools to analyze the athlete's data BEFORE generating a plan.
 - Call get_recent_activities and get_weekly_summary to understand their current fitness.
 - Call get_race_history to understand their race performance.
+- Use is_indoor_activity if you suspect an activity data might be inaccurate or missing GPS.
+- Use get_activity_details to analyze specific sessions, especially for "easy run discipline".
 - Create a personalized, realistic training plan.
 - Be honest about goal feasibility.
+
+PRO COACHING GUIDELINES:
+1. Easy Run Discipline: The athlete struggles with keeping their heart rate low on easy/recovery runs. Monitor this closely using get_activity_details. For indoor runs, prioritize HR data over pace.
+2. Aerobic Decoupling: If HR rises significantly for the same pace in the second half of a run, identify it as a sign of poor aerobic base or fatigue.
+3. Race Deduction: Use race data to validate their intensity zones.
 
 The athlete's goal: {user_goal}
 
@@ -341,13 +489,10 @@ IMPORTANT: After your analysis, provide the training plan in TWO parts:
 Include ALL days (including rest days with type "rest").
 Derive paces and heart rate zones from their ACTUAL data, not generic tables."""
 
-        chat = self.model.start_chat(history=[])
+        chat = self.client.chats.create(model=self.model_id, config={"tools": self.tools})
 
         try:
-            response = chat.send_message(
-                system_prompt,
-                tools=COACH_TOOLS,
-            )
+            response = chat.send_message(system_prompt)
 
             # Handle tool calls in a loop
             response, final_text = self._handle_tool_loop(chat, response)
@@ -362,10 +507,7 @@ Derive paces and heart rate zones from their ACTUAL data, not generic tables."""
         The coach can use tools to answer data-driven questions.
         """
         try:
-            response = chat_session.send_message(
-                message,
-                tools=COACH_TOOLS,
-            )
+            response = chat_session.send_message(message)
             _, final_text = self._handle_tool_loop(chat_session, response)
             return final_text
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -373,25 +515,13 @@ Derive paces and heart rate zones from their ACTUAL data, not generic tables."""
 
     def analyze_adherence(self) -> str:
         """Autonomously analyze plan adherence for the current week."""
-        chat = self.model.start_chat(history=[])
-
+        chat = self.client.chats.create(model=self.model_id, config={"tools": self.tools})
         prompt = """You are an expert running coach reviewing plan adherence.
-
-Use the available tools to:
-1. Call get_current_plan to see the active training plan
-2. Call compare_plan_vs_actual with week_offset=0 for this week
-3. Call get_recent_activities with days=7 for the latest activities
-
-Then provide:
-- A summary of adherence (what was done vs planned)
-- Specific feedback on each completed workout (pace, distance, HR vs targets)
-- Suggestions for remaining workouts this week
-- Any plan adjustments if needed
-
-Be supportive but honest. Use actual numbers from the data."""
+Use tools to: 1. get_current_plan, 2. compare_plan_vs_actual(week_offset=0), 3. get_recent_activities(days=7).
+Provide concise feedback, zone check, and next steps."""
 
         try:
-            response = chat.send_message(prompt, tools=COACH_TOOLS)
+            response = chat.send_message(prompt)
             _, final_text = self._handle_tool_loop(chat, response)
             return final_text
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -407,7 +537,7 @@ Be supportive but honest. Use actual numbers from the data."""
             candidate = response.candidates[0]
             parts = candidate.content.parts
 
-            function_calls = [p for p in parts if p.function_call.name]
+            function_calls = [p for p in parts if p.function_call]
             if not function_calls:
                 # No more tool calls — extract text
                 text_parts = [p.text for p in parts if p.text]
@@ -418,8 +548,8 @@ Be supportive but honest. Use actual numbers from the data."""
             for part in function_calls:
                 result = self._dispatch_tool_call(part.function_call)
                 tool_responses.append(
-                    genai.protos.Part(
-                        function_response=genai.protos.FunctionResponse(
+                    types.Part(
+                        function_response=types.FunctionResponse(
                             name=part.function_call.name,
                             response={"result": result},
                         )
@@ -427,8 +557,7 @@ Be supportive but honest. Use actual numbers from the data."""
                 )
 
             response = chat_session.send_message(
-                genai.protos.Content(parts=tool_responses),
-                tools=COACH_TOOLS,
+                types.Content(parts=tool_responses),
             )
             iteration += 1
 
