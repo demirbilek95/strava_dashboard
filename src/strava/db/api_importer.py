@@ -100,6 +100,7 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
             or api_data.get("kilojoules"),  # calories for Run, kilojoules for Bike
             "workout_type": api_data.get("workout_type"),
             "commute": api_data.get("commute"),
+            "trainer": api_data.get("trainer"),
             "gear": api_data.get("gear_id"),
             # Fields not in summary or requiring calculation
             # "filename": "strava_api"

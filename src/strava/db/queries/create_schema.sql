@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS activities (
     athlete_weight REAL,
     workout_type INTEGER,
     commute BOOLEAN DEFAULT 0,
+    trainer BOOLEAN DEFAULT 0,
     gear TEXT,
     filename TEXT,
     

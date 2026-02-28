@@ -25,6 +25,9 @@ class DatabaseManager:
 
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure schema is up to date
+        if self.db_path.exists():
+            self._migrate_schema()
 
     @contextmanager
     def get_connection(self):
@@ -72,6 +75,24 @@ class DatabaseManager:
             conn.executescript(schema_sql)
 
         print(f"✓ Database tables created at {self.db_path}")
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Apply migrations to existing tables."""
+        # Check if workout_type exists in activities
+        try:
+            columns = self.execute_query("PRAGMA table_info(activities)")
+            column_names = [col["name"] for col in columns]
+            if "workout_type" not in column_names:
+                with self.get_connection() as conn:
+                    conn.execute("ALTER TABLE activities ADD COLUMN workout_type INTEGER")
+                print("✓ Added workout_type column to activities table")
+            if "trainer" not in column_names:
+                with self.get_connection() as conn:
+                    conn.execute("ALTER TABLE activities ADD COLUMN trainer BOOLEAN DEFAULT 0")
+                print("✓ Added trainer column to activities table")
+        except Exception as exc:
+            print(f"! Migration check failed: {exc}")
 
     def execute_query(self, query: str, params: tuple = ()) -> List[sqlite3.Row]:
         """
