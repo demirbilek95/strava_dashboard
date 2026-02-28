@@ -143,9 +143,14 @@ class AICoach:  # pylint: disable=too-few-public-methods
             raise ValueError("GOOGLE_API_KEY not found in environment variables.")
 
         self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-latest"
+        # "gemini-latest" is not a valid API alias, mapping to the actual latest model
+        self.model_id = "gemini-2.5-flash"
         self.db = database or DatabaseManager()
-        self.hr_zones = hr_zones or [145, 164, 174, 188]  # Provided from UI or fallback
+        
+        if not hr_zones or len(hr_zones) != 4:
+            raise ValueError("hr_zones must be a list of 4 heart rate zone limits.")
+        self.hr_zones = hr_zones
+        
         self._activities_df = None
         self.tools = COACH_TOOLS
 
@@ -533,8 +538,13 @@ Provide concise feedback, zone check, and next steps."""
         """Handle Gemini function-calling loop until text response."""
         iteration = 0
         while iteration < max_iterations:
-            # Check if the response has function calls
+            if not response.candidates:
+                return response, "Error: No response candidates returned by the model."
+                
             candidate = response.candidates[0]
+            if not candidate.content or not candidate.content.parts:
+                return response, "Error: Model returned an empty response or was blocked."
+                
             parts = candidate.content.parts
 
             function_calls = [p for p in parts if p.function_call]
@@ -562,8 +572,10 @@ Provide concise feedback, zone check, and next steps."""
             iteration += 1
 
         # Fallback if max iterations reached
-        text_parts = [p.text for p in response.candidates[0].content.parts if p.text]
-        return response, "\n".join(text_parts) if text_parts else "Plan generation timed out."
+        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+            text_parts = [p.text for p in response.candidates[0].content.parts if p.text]
+            return response, "\n".join(text_parts) if text_parts else "Plan generation timed out."
+        return response, "Plan generation timed out (empty response)."
 
     @staticmethod
     def parse_plan_json(plan_text: str) -> Optional[Dict[str, Any]]:
