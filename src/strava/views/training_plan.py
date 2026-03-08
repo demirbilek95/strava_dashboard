@@ -57,10 +57,13 @@ def _render_calendar(  # pylint: disable=too-many-locals
     month_days = cal.monthdayscalendar(year, month)
     month_name = calendar.month_name[month]
 
-    # Index workouts by date
+    # Index workouts by date (handle multiple workouts per day)
     workout_by_date = {}
     for w in workouts:
-        workout_by_date[w["workout_date"]] = w
+        date_key = w["workout_date"]
+        if date_key not in workout_by_date:
+            workout_by_date[date_key] = []
+        workout_by_date[date_key].append(w)
 
     # Index actual activities by date
     activity_by_date = {}
@@ -84,9 +87,9 @@ def _render_calendar(  # pylint: disable=too-many-locals
         color: #888; font-size: 12px; text-transform: uppercase;
     }
     .cal-day {
-        min-height: 90px; border-radius: 8px; padding: 6px 8px;
+        min-height: 110px; border-radius: 8px; padding: 6px 8px;
         background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-        position: relative;
+        position: relative; display: flex; flex-direction: column; gap: 2px;
     }
     .cal-day.today { border: 2px solid #2196F3; }
     .cal-day.empty { background: transparent; border: none; min-height: 0; }
@@ -129,40 +132,80 @@ def _render_calendar(  # pylint: disable=too-many-locals
             html += f'<div class="{classes}">'
             html += f'<div class="cal-day-num">{day}</div>'
 
-            # Planned workout
+            # Planned workouts
             if date_str in workout_by_date:
-                w = workout_by_date[date_str]
-                color = _get_workout_color(w["workout_type"])
-                status = _get_status(w)
-                opacity = "0.5" if status == "missed" else "1.0"
-                icon = {"completed": "✅", "missed": "❌", "upcoming": "📋", "rest": "😴"}
-                label = w["workout_type"].replace("_", " ").title()
-                dist = f" {w['target_distance_km']}km" if w.get("target_distance_km") else ""
-                html += (
-                    f'<div class="cal-workout" style="background:{color};opacity:{opacity}">'
-                    f"{icon.get(status, '')} {label}{dist}</div>"
-                )
-                # Extra details: description, pace, HR zone
-                details = []
-                if w.get("description") and w["workout_type"] != "rest":
-                    details.append(w["description"])
-                if w.get("target_pace_min_km"):
-                    pace_val = w["target_pace_min_km"]
-                    mins = int(pace_val)
-                    secs = int((pace_val - mins) * 60)
-                    details.append(f"Pace: {mins}:{secs:02d}/km")
-                if w.get("target_hr_zone"):
-                    details.append(w["target_hr_zone"])
-                if details:
-                    detail_str = " · ".join(details)
-                    html += f'<div class="cal-detail">{detail_str}</div>'
+                for w in workout_by_date[date_str]:
+                    color = _get_workout_color(w["workout_type"])
+                    status = _get_status(w)
+                    opacity = "0.5" if status == "missed" else "1.0"
+                    icon = {"completed": "✅", "missed": "❌", "upcoming": "📋", "rest": "😴"}
+                    label = w["workout_type"].replace("_", " ").title()
+
+                    # Build prominent stats: distance + pace
+                    stats_parts = []
+                    if w.get("target_distance_km"):
+                        stats_parts.append(f"{w['target_distance_km']}km")
+                    if w.get("target_pace_min_km"):
+                        pace_val = w["target_pace_min_km"]
+                        mins = int(pace_val)
+                        secs = int((pace_val - mins) * 60)
+                        stats_parts.append(f"{mins}:{secs:02d}/km")
+                    stats_str = f" · {' · '.join(stats_parts)}" if stats_parts else ""
+
+                    html += (
+                        f'<div class="cal-workout" style="background:{color};opacity:{opacity}">'
+                        f"{icon.get(status, '')} {label}{stats_str}</div>"
+                    )
+                    # Secondary detail line: description and HR zone
+                    details = []
+                    if w.get("description") and w["workout_type"] != "rest":
+                        details.append(w["description"])
+                    if w.get("target_hr_zone"):
+                        details.append(w["target_hr_zone"])
+                    if details:
+                        detail_str = " · ".join(details)
+                        html += f'<div class="cal-detail">{detail_str}</div>'
 
             # Actual activity
             if date_str in activity_by_date:
-                for act in activity_by_date[date_str][:2]:  # max 2 per day
-                    name = act.get("activity_name", "Activity")
-                    dist = f"{act['distance']:.1f}km" if pd.notnull(act.get("distance")) else ""
-                    html += f'<div class="cal-actual">🏃 {name} {dist}</div>'
+                ACTIVITY_EMOJI = {
+                    "Run": "🏃",
+                    "Ride": "🚴",
+                    "Swim": "🏊",
+                    "Walk": "🚶",
+                    "Hike": "🧗",
+                    "Workout": "💪",
+                    "WeightTraining": "💪",
+                    "Yoga": "🧘",
+                    "Pilates": "🧘",
+                    "Crossfit": "💪",
+                    "Rowing": "🚣",
+                    "Soccer": "⚽",
+                    "Tennis": "🎾",
+                }
+                for act in activity_by_date[date_str][:4]:
+                    a_type = act.get("activity_type", "")
+                    emoji = ACTIVITY_EMOJI.get(a_type, "📊")
+                    name = act.get("activity_name", a_type or "Activity")
+                    
+                    raw_dist = act.get("distance", 0)
+                    # distance column is already in km (converted by SQL)
+                    dist = f"{raw_dist:.1f}k" if pd.notnull(raw_dist) and raw_dist >= 0.1 else ""
+                    
+                    # Pace: only for distance-based activities
+                    pace = ""
+                    if dist and pd.notnull(act.get("moving_time")) and act["moving_time"] > 0:
+                        pace_dec = (act["moving_time"] / 60) / raw_dist
+                        mins = int(pace_dec)
+                        secs = int((pace_dec - mins) * 60)
+                        pace = f"{mins}:{secs:02d}/k"
+                    
+                    hr_val = act.get("average_heart_rate")
+                    hr = f"{int(hr_val)}bpm" if pd.notnull(hr_val) and hr_val else ""
+                    
+                    stats = " · ".join([d for d in [dist, pace, hr] if d])
+                    label = stats if stats else name
+                    html += f'<div class="cal-actual" title="{name}">{emoji} {label}</div>'
 
             html += "</div>"
 
@@ -391,8 +434,28 @@ def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
                     if new_json:
                         st.session_state.draft_plan_text = reply
                         st.session_state.draft_plan_json = new_json
+                        # Reset the draft calendar view to show the new plan's start month
+                        if "draft_cal_month" in st.session_state:
+                            del st.session_state.draft_cal_month
+                        if "draft_cal_year" in st.session_state:
+                            del st.session_state.draft_cal_year
+                        # Also reset the main Calendar tab view
+                        if "cal_month" in st.session_state:
+                            del st.session_state.cal_month
+                        if "cal_year" in st.session_state:
+                            del st.session_state.cal_year
+                        st.rerun()
                 else:
                     st.error("Chat session lost. Please regenerate.")
+
+    # JSON debug expander
+    import json as _json
+    if st.session_state.get("draft_plan_json"):
+        with st.expander("🔍 View Raw Plan JSON (for debugging)", expanded=False):
+            st.code(
+                _json.dumps(st.session_state.draft_plan_json, indent=2),
+                language="json",
+            )
 
     # Accept / Regenerate buttons
     col1, col2 = st.columns(2)
@@ -449,10 +512,27 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
     """Calendar tab showing planned workouts and actual activities."""
     plan = database.get_active_plan()
 
+    # Fall back to draft plan in session state if no accepted plan yet
+    using_draft = False
+    if not plan:
+        draft_json = st.session_state.get("draft_plan_json")
+        draft_goal = st.session_state.get("user_goal", "Draft Plan")
+        if draft_json:
+            workouts = AICoach.plan_json_to_workouts(0, draft_json)
+            plan = {
+                "goal": draft_goal,
+                "start_date": draft_json.get("start_date", ""),
+                "end_date": draft_json.get("end_date", ""),
+                "workouts": workouts,
+            }
+            using_draft = True
+
     if not plan:
         st.info("No active training plan. Generate one in the **Generate Plan** tab.")
         return
 
+    if using_draft:
+        st.warning("📋 Showing **draft plan** — accept it in the Generate Plan tab to save it.")
     st.markdown(f"**Goal:** {plan['goal']}")
 
     today = datetime.date.today()
@@ -480,8 +560,17 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
                 st.session_state.cal_year += 1
             st.rerun()
 
-    year = st.session_state.get("cal_year", today.year)
-    month = st.session_state.get("cal_month", today.month)
+    # Default to the plan's start month instead of today
+    default_year, default_month = today.year, today.month
+    if plan.get("start_date"):
+        try:
+            start = datetime.date.fromisoformat(plan["start_date"])
+            default_year, default_month = start.year, start.month
+        except ValueError:
+            pass
+
+    year = st.session_state.get("cal_year", default_year)
+    month = st.session_state.get("cal_month", default_month)
 
     _render_calendar(year, month, plan["workouts"], dataframe)
 
@@ -511,13 +600,13 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
         wdf["week"] = wdf["workout_date"].dt.isocalendar().week
 
         for week_num, group in wdf.groupby("week"):
-            total_dist = group["target_distance_km"].sum()
+            total_dist = group["target_distance_km"].sum() if "target_distance_km" in wdf.columns else 0
             n_workouts = len(group[group["workout_type"] != "rest"])
-            completed = group["completed"].sum()
-            dist_str = f"{total_dist:.1f}km" if pd.notnull(total_dist) else "N/A"
+            completed = group["completed"].sum() if "completed" in wdf.columns else 0
+            dist_str = f"{total_dist:.1f}km planned, " if pd.notnull(total_dist) and total_dist > 0 else ""
             st.markdown(
                 f"**Week {week_num}**: {n_workouts} workouts, "
-                f"{dist_str} planned, {int(completed)} completed"
+                f"{dist_str}{int(completed)} completed"
             )
 
 
@@ -607,6 +696,41 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
                 st.session_state.feedback_history.append({"role": "assistant", "content": reply})
 
 
+def _sync_planned_workouts_with_activities(database: DatabaseManager, df: pd.DataFrame):
+    """Auto-match activities in the dataframe to incomplete planned workouts."""
+    plan = database.get_active_plan()
+    if not plan or df.empty:
+        return
+
+    today_str = datetime.date.today().isoformat()
+    workouts = plan.get("workouts", [])
+    
+    # Process only past/present workouts that aren't completed and aren't rest days
+    incomplete_workouts = [
+        w for w in workouts
+        if w["workout_date"] <= today_str
+        and w["workout_type"] != "rest"
+        and not w.get("completed")
+    ]
+
+    for w in incomplete_workouts:
+        w_date_str = w["workout_date"]
+        
+        # Look for activities on this date
+        if "activity_date" in df.columns:
+            day_activities = df[df["activity_date"].dt.strftime('%Y-%m-%d') == w_date_str]
+            
+            if not day_activities.empty:
+                # Simple matching: pick the longest activity of the day
+                best_match = day_activities.sort_values(by="distance", ascending=False).iloc[0]
+                
+                database.update_workout_completion(
+                    workout_id=w["workout_id"],
+                    activity_id=int(best_match["activity_id"]),
+                    feedback="Auto-matched via Strava sync"
+                )
+
+
 # ── Main page ────────────────────────────────────────────────────────
 
 
@@ -623,6 +747,9 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
 
     # Ensure new tables exist
     database.create_tables()
+
+    # Auto-sync incomplete planned workouts with actual activities
+    _sync_planned_workouts_with_activities(database, dataframe)
 
     tab1, tab2, tab3 = st.tabs(["📝 Generate Plan", "📅 Calendar", "💬 Feedback & Chat"])
 
