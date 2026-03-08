@@ -467,7 +467,9 @@ The athlete's goal: {user_goal}
 
 IMPORTANT: After your analysis, provide the training plan in TWO parts:
 1. A human-readable explanation (your coaching analysis and plan overview).
-2. A JSON block wrapped in ```json ... ``` containing the structured plan in this format:
+2. A JSON block wrapped in ```json ... ``` containing the structured plan.
+
+CRITICAL: The human-readable explanation and the JSON block MUST be 100% consistent. If you mention a change or a specific workout in your text, it MUST be reflected exactly in the JSON. ALWAYS include the full JSON block even in follow-up messages.
 ```json
 {{
   "start_date": "YYYY-MM-DD",
@@ -492,7 +494,10 @@ IMPORTANT: After your analysis, provide the training plan in TWO parts:
 }}
 ```
 Include ALL days (including rest days with type "rest").
-Derive paces and heart rate zones from their ACTUAL data, not generic tables."""
+Derive paces and heart rate zones from their ACTUAL data, not generic tables.
+If the plan spans multiple months, ensure the "date" fields are correct for each day.
+IMPORTANT: If a day has multiple sessions (e.g. Easy Run + Strength), output them as SEPARATE workout objects with the same "date", NOT combined into one entry. This is how they will be individually displayed on the calendar.
+"""
 
         chat = self.client.chats.create(model=self.model_id, config={"tools": self.tools})
 
@@ -524,7 +529,9 @@ Your Mission:
 
 IMPORTANT: After your analysis, provide the updated training plan in TWO parts:
 1. A human-readable explanation (what you changed and why).
-2. A JSON block wrapped in ```json ... ``` containing the NEW structured plan (including both past completed workouts as they were, and the new future workouts) in this exact format:
+2. A JSON block wrapped in ```json ... ``` containing the NEW structured plan (including both past completed workouts as they were, and the new future workouts).
+
+CRITICAL: The human-readable explanation and the JSON block MUST be 100% consistent. If you mention a change in your text, it MUST be reflected exactly in the JSON. ALWAYS include the full JSON block for the entire plan.
 ```json
 {{
   "start_date": "YYYY-MM-DD",
@@ -548,7 +555,9 @@ IMPORTANT: After your analysis, provide the updated training plan in TWO parts:
   ]
 }}
 ```
-Ensure you keep the workouts from the past unmodified (unless the user explicitly asks to change historical data) and only shift/adapt the future workouts. Include ALL days."""
+Ensure you keep the workouts from the past unmodified (unless the user explicitly asks to change historical data) and only shift/adapt the future workouts. Include ALL days.
+IMPORTANT: If a day has multiple sessions (e.g. Easy Run + Strength), output them as SEPARATE workout objects with the same \"date\", NOT combined into one entry.
+"""
 
         chat = self.client.chats.create(model=self.model_id, config={"tools": self.tools})
 
