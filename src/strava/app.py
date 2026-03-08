@@ -192,10 +192,10 @@ def main():
         page_activity_run_details(dataframe, zones)
     elif page == "Deep Dive":
         page_recent_activities(dataframe, zones)
-    elif page == "Races":
-        page_races(dataframe, zones)
     elif page == "AI Coach":
         page_ai_training_plan(dataframe, database)
+    elif page == "Races":
+        page_races(dataframe, zones)
 
 
 if __name__ == "__main__":
