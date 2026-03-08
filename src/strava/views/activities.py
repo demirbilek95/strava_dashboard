@@ -180,6 +180,8 @@ def _plot_scatter(filtered_df, zones):
 
     # Format activity_date for display
     km_data["activity_date_str"] = km_data["activity_date"].dt.strftime("%Y-%m-%d")
+    short_date = km_data["activity_date"].dt.strftime("%b %d")
+    km_data["display_name"] = km_data["activity_name"] + " (" + short_date + ")"
 
     # Create hover template
     hover_cols = ["activity_name", "activity_date_str", "km_segment"]
@@ -188,13 +190,14 @@ def _plot_scatter(filtered_df, zones):
         km_data,
         x="avg_pace",
         y="avg_hr",
-        color="activity_name",
+        color="display_name",
         hover_data=hover_cols,
         title="Heart Rate vs Pace (Per Kilometer) with Zones",
         labels={
             "avg_pace": "Pace (min/km)",
             "avg_hr": "HR (bpm)",
-            "activity_name": "Activity",
+            "display_name": "Activity",
+            "activity_name": "Activity Name",
             "activity_date_str": "Date",
             "km_segment": "Kilometer",
         },
