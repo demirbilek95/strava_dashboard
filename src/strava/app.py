@@ -156,13 +156,11 @@ def main():
 
     # Navigation
     st.sidebar.title("Navigation")
-    page_options = ["General Overview", "Activity Run Details", "Deep Dive", "Races", "AI Coach"]
+    page_options = ["General Overview", "Activity Run Details", "Deep Dive", "AI Coach", "Races"]
 
     # Handle navigation from other pages
     if "requested_page" in st.session_state:
         st.session_state["active_page"] = st.session_state.pop("requested_page")
-
-
 
 
     # helper for radio button
