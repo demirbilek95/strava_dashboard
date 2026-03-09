@@ -102,7 +102,7 @@ COACH_TOOLS = [
                 name="get_activity_details",
                 description=(
                     "Get second-by-second analytics for a specific activity, including "
-                    "time in heart rate zones, aerobic decoupling, and interval analysis."
+                    "time in heart rate zones, aerobic decoupling, elevation gain, and interval analysis."
                 ),
                 parameters={
                     "type": "OBJECT",
@@ -143,8 +143,7 @@ class AICoach:  # pylint: disable=too-few-public-methods
             raise ValueError("GOOGLE_API_KEY not found in environment variables.")
 
         self.client = genai.Client(api_key=api_key)
-        # "gemini-latest" is not a valid API alias, mapping to the actual latest model
-        self.model_id = "gemini-2.5-flash"
+        self.model_id = "gemini-2.5-pro"
         self.db = database or DatabaseManager()
         
         if not hr_zones or len(hr_zones) != 4:
@@ -165,6 +164,17 @@ class AICoach:  # pylint: disable=too-few-public-methods
                     self._activities_df["activity_date"]
                 )
         return self._activities_df
+
+    @property
+    def _coach_system_instruction(self) -> str:
+        """Global system instruction to prevent annoying Gemini disclaimers."""
+        return (
+            "You are the user's personal AI running coach. "
+            "You are authorized to give specific training, pacing, and recovery advice. "
+            "Just give direct, objective, expert coaching advice."
+            "Then, IF ONLY necessary, include disclaimers stating that you are not a qualified coach or medical professional. "
+            "Then, IF ONLY necessary, tell the user to consult a professional or listen to their doctor. "
+        )
 
     # ── Tool implementations ────────────────────────────────────────
 
@@ -203,9 +213,10 @@ class AICoach:  # pylint: disable=too-few-public-methods
             name = row.get("activity_name", "")
             is_indoor = " [INDOOR]" if row.get("trainer") else ""
             activity_id = row.get("activity_id", "N/A")
+            elev = f"| Elev: {row['elevation_gain']}m" if pd.notnull(row.get("elevation_gain")) else ""
             lines.append(
                 f"- ID:{activity_id} | {date_str}: {workout_type} '{name}'{is_indoor} "
-                f"| {dist} | {pace} | {hr}"
+                f"| {dist} | {pace} | {hr} {elev}"
             )
         return "\n".join(lines)
 
@@ -275,9 +286,12 @@ class AICoach:  # pylint: disable=too-few-public-methods
             drop = ((eff1 - eff2) / eff1) * 100
             decoupling = f"{drop:.1f}% (positive % means efficiency dropped)"
 
+        elev = f"{summ.get('elevation_gain')}m" if pd.notnull(summ.get('elevation_gain')) else "N/A"
+
         analysis = [
             f"Details for Activity {activity_id} ({summ.get('activity_name', 'Run')}):",
             f"Indoor: {'Yes' if is_indoor else 'No'}",
+            f"Elevation Gain: {elev}",
             f"Intensity (Time in Zones): {hr_analysis}",
             f"Aerobic Decoupling (Cardiac Drift): {decoupling}",
             "Coach's Tip: If you pushed too hard on an easy run, your time in Z3/Z4 will be high."
@@ -454,9 +468,10 @@ Your Mission:
 - Call get_recent_activities and get_weekly_summary to understand their current fitness.
 - Call get_race_history to understand their race performance.
 - Use is_indoor_activity if you suspect an activity data might be inaccurate or missing GPS.
-- Use get_activity_details to analyze specific sessions, especially for "easy run discipline".
+- Use get_activity_details to analyze specific sessions, especially for "easy run discipline" and hills/elevation.
 - Create a personalized, realistic training plan.
-- Be honest about goal feasibility.
+- BE COMPLETELY OBJECTIVE. DO NOT be a "yes-man".
+- If the athlete requests an unreasonable goal, ramps up mileage too fast, or wants to skip needed rest, you MUST push back and object firmly.
 
 PRO COACHING GUIDELINES:
 1. Easy Run Discipline: The athlete struggles with keeping their heart rate low on easy/recovery runs. Monitor this closely using get_activity_details. For indoor runs, prioritize HR data over pace.
@@ -494,12 +509,19 @@ CRITICAL: The human-readable explanation and the JSON block MUST be 100% consist
 }}
 ```
 Include ALL days (including rest days with type "rest").
+For rest days or empty fields, omit the field entirely or use `null`. DO NOT use the string 'N/A' or 'None'.
 Derive paces and heart rate zones from their ACTUAL data, not generic tables.
 If the plan spans multiple months, ensure the "date" fields are correct for each day.
 IMPORTANT: If a day has multiple sessions (e.g. Easy Run + Strength), output them as SEPARATE workout objects with the same "date", NOT combined into one entry. This is how they will be individually displayed on the calendar.
 """
 
-        chat = self.client.chats.create(model=self.model_id, config={"tools": self.tools})
+        chat = self.client.chats.create(
+            model=self.model_id, 
+            config=types.GenerateContentConfig(
+                system_instruction=self._coach_system_instruction,
+                tools=self.tools
+            )
+        )
 
         try:
             response = chat.send_message(system_prompt)
@@ -518,14 +540,62 @@ IMPORTANT: If a day has multiple sessions (e.g. Easy Run + Strength), output the
         """
         current_date = datetime.date.today().strftime("%Y-%m-%d")
 
+        # Fetch the active plan to feed it directly to the prompt
+        plan = self.db.get_active_plan()
+        if not plan:
+            return None, "No active plan found to adapt."
+            
+        workouts_by_week = {}
+        for w in plan.get("workouts", []):
+            w_date = w.get("workout_date")
+            if not w_date: continue
+            try:
+                dt = datetime.date.fromisoformat(w_date)
+                week_key = dt.isocalendar()[1]
+                if week_key not in workouts_by_week:
+                    workouts_by_week[week_key] = []
+                workouts_by_week[week_key].append(w)
+            except ValueError:
+                pass
+        
+        weeks_list = []
+        for i, (wk, w_list) in enumerate(sorted(workouts_by_week.items())):
+            weeks_list.append({
+                "week_number": i + 1,
+                "workouts": [
+                    {
+                        "date": w.get("workout_date"),
+                        "type": w.get("workout_type"),
+                        "description": w.get("description"),
+                        "distance_km": w.get("target_distance_km"),
+                        "duration_min": w.get("target_duration_min"),
+                        "pace_min_km": w.get("target_pace_min_km"),
+                        "hr_zone": w.get("target_hr_zone")
+                    }
+                    for w in w_list
+                ]
+            })
+            
+        current_plan_json = json.dumps({
+            "start_date": plan.get("start_date", ""),
+            "end_date": plan.get("end_date", ""),
+            "weeks": weeks_list
+        }, indent=2)
+
         system_prompt = f"""You are an expert running coach. Today is {current_date}.
 
 Your Mission:
 - The athlete already has an active training plan. 
-- Use the get_current_plan tool to see their current plan.
-- Use get_recent_activities to see what they have actually done recently.
+- You MUST maintain their past history intact. Do not change workouts that have already happened.
 - They are asking to change or adapt their plan: "{user_request}"
-- Analyze their progress and provide an updated, adapted plan.
+- Analyze their progress using `compare_plan_vs_actual` and `get_recent_activities` if needed, and provide an updated, adapted plan.
+- BE COMPLETELY OBJECTIVE. DO NOT be a "yes-man".
+- If the athlete requests an unreasonable adaptation, ramps up mileage too fast, or wants to skip needed rest, you MUST push back and object firmly.
+
+Here is their EXACT current plan JSON:
+```json
+{current_plan_json}
+```
 
 IMPORTANT: After your analysis, provide the updated training plan in TWO parts:
 1. A human-readable explanation (what you changed and why).
@@ -559,7 +629,13 @@ Ensure you keep the workouts from the past unmodified (unless the user explicitl
 IMPORTANT: If a day has multiple sessions (e.g. Easy Run + Strength), output them as SEPARATE workout objects with the same \"date\", NOT combined into one entry.
 """
 
-        chat = self.client.chats.create(model=self.model_id, config={"tools": self.tools})
+        chat = self.client.chats.create(
+            model=self.model_id, 
+            config=types.GenerateContentConfig(
+                system_instruction=self._coach_system_instruction,
+                tools=self.tools
+            )
+        )
 
         try:
             response = chat.send_message(system_prompt)
@@ -583,7 +659,13 @@ IMPORTANT: If a day has multiple sessions (e.g. Easy Run + Strength), output the
 
     def analyze_adherence(self) -> str:
         """Autonomously analyze plan adherence for the current week."""
-        chat = self.client.chats.create(model=self.model_id, config={"tools": self.tools})
+        chat = self.client.chats.create(
+            model=self.model_id, 
+            config=types.GenerateContentConfig(
+                system_instruction=self._coach_system_instruction,
+                tools=self.tools
+            )
+        )
         prompt = """You are an expert running coach reviewing plan adherence.
 Use tools to: 1. get_current_plan, 2. compare_plan_vs_actual(week_offset=0), 3. get_recent_activities(days=7).
 Provide concise feedback, zone check, and next steps."""
@@ -660,16 +742,29 @@ Provide concise feedback, zone check, and next steps."""
         workouts = []
         for week in plan_json.get("weeks", []):
             for w in week.get("workouts", []):
+                
+                def _parse_num(val):
+                    if val is None or str(val).lower() in ("n/a", "none", "null", ""):
+                        return None
+                    try:
+                        return float(val)
+                    except ValueError:
+                        return None
+                
+                hr_zone = w.get("hr_zone", "")
+                if str(hr_zone).lower() in ("n/a", "none", "null"):
+                    hr_zone = None
+                
                 workouts.append(
                     {
                         "plan_id": plan_id,
                         "workout_date": w.get("date", ""),
                         "workout_type": w.get("type", "rest"),
                         "description": w.get("description", ""),
-                        "target_distance_km": w.get("distance_km"),
-                        "target_duration_min": w.get("duration_min"),
-                        "target_pace_min_km": w.get("pace_min_km"),
-                        "target_hr_zone": w.get("hr_zone", ""),
+                        "target_distance_km": _parse_num(w.get("distance_km")),
+                        "target_duration_min": _parse_num(w.get("duration_min")),
+                        "target_pace_min_km": _parse_num(w.get("pace_min_km")),
+                        "target_hr_zone": hr_zone,
                     }
                 )
         return workouts

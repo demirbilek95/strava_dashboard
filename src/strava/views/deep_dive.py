@@ -75,8 +75,8 @@ def _render_plots(track_df, zones):
     st.subheader("Performance Analysis")
     st.caption("Pace calculated using elapsed time")
 
-    # Triple-stacked synchronized plots: Pace, Cadence, HR
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05)
+    # Quadruple-stacked synchronized plots: Pace, Elevation, Cadence, HR
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.04)
 
     # 1. Pace (Top) - Standard ordering (Bottom-to-Top) with zone colors
     pace_df = track_df[(track_df["Pace_Decimal"] < 12) & (track_df["Pace_Decimal"] > 3)].copy()
@@ -107,7 +107,7 @@ def _render_plots(track_df, zones):
             opacity=0.2,
             layer="below",
             line_width=0,
-            row=3,
+            row=4,
             col=1,
         )
         # Add zone label
@@ -120,7 +120,7 @@ def _render_plots(track_df, zones):
             showarrow=False,
             xanchor="left",
             font={"size": 10, "color": "black"},  # Black text for visibility on light/colored bg
-            row=3,
+            row=4,
             col=1,
         )
 
@@ -137,7 +137,23 @@ def _render_plots(track_df, zones):
     # Using standard (non-reversed) axis as requested "bottom to top"
     fig.update_yaxes(title_text="Pace (min/km)", autorange="reversed", row=1, col=1, range=[12, 3])
 
-    # 2. Cadence (Middle)
+    # 2. Elevation (Second from Top)
+    if "Altitude" in track_df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=track_df["Elapsed Seconds"],
+                y=track_df["Altitude"],
+                name="Elevation",
+                line={"color": "green"},
+                fill="tozeroy",
+                fillcolor="rgba(0,255,0,0.1)",
+            ),
+            row=2,
+            col=1,
+        )
+        fig.update_yaxes(title_text="Elevation (m)", row=2, col=1)
+
+    # 3. Cadence (Third from Top)
     cadence_col = "cadence" if "cadence" in track_df.columns else None
     if cadence_col:
         fig.add_trace(
@@ -147,12 +163,12 @@ def _render_plots(track_df, zones):
                 name="Cadence",
                 line={"color": "purple"},
             ),
-            row=2,
+            row=3,
             col=1,
         )
-        fig.update_yaxes(title_text="Cadence (spm)", row=2, col=1)
+        fig.update_yaxes(title_text="Cadence (spm)", row=3, col=1)
 
-    # 3. HR (Bottom)
+    # 4. HR (Bottom)
     fig.add_trace(
         go.Scatter(
             x=track_df["Elapsed Seconds"],
@@ -160,12 +176,12 @@ def _render_plots(track_df, zones):
             name="Heart Rate",
             line={"color": "red"},
         ),
-        row=3,
+        row=4,
         col=1,
     )
-    fig.update_yaxes(title_text="Heart Rate (bpm)", row=3, col=1)
+    fig.update_yaxes(title_text="Heart Rate (bpm)", row=4, col=1)
 
-    fig.update_layout(height=700, 
+    fig.update_layout(height=850, 
                       hovermode="x unified", 
                       showlegend=True)
     st.plotly_chart(fig)

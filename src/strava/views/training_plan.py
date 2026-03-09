@@ -46,6 +46,17 @@ def _get_status(workout: Dict[str, Any]) -> str:
     return "upcoming"
 
 
+def _get_coach(database: DatabaseManager) -> AICoach:
+    """Helper to initialize AICoach with global HR zones."""
+    zones = [
+        st.session_state.get("global_z1", 145),
+        st.session_state.get("global_z2", 164),
+        st.session_state.get("global_z3", 174),
+        st.session_state.get("global_z4", 188),
+    ]
+    return AICoach(database, hr_zones=zones)
+
+
 # ── Calendar rendering ──────────────────────────────────────────────
 
 
@@ -143,13 +154,20 @@ def _render_calendar(  # pylint: disable=too-many-locals
 
                     # Build prominent stats: distance + pace
                     stats_parts = []
-                    if w.get("target_distance_km"):
-                        stats_parts.append(f"{w['target_distance_km']}km")
-                    if w.get("target_pace_min_km"):
-                        pace_val = w["target_pace_min_km"]
-                        mins = int(pace_val)
-                        secs = int((pace_val - mins) * 60)
-                        stats_parts.append(f"{mins}:{secs:02d}/km")
+                    dist = w.get("target_distance_km")
+                    if dist and str(dist).lower() not in ("n/a", "none", "null", ""):
+                        stats_parts.append(f"{dist}km")
+                    
+                    pace_val = w.get("target_pace_min_km")
+                    if pace_val and str(pace_val).lower() not in ("n/a", "none", "null", ""):
+                        try:
+                            pace_val = float(pace_val)
+                            mins = int(pace_val)
+                            secs = int((pace_val - mins) * 60)
+                            stats_parts.append(f"{mins}:{secs:02d}/km")
+                        except ValueError:
+                            stats_parts.append(f"{pace_val}/km")
+                    
                     stats_str = f" · {' · '.join(stats_parts)}" if stats_parts else ""
 
                     html += (
@@ -251,13 +269,7 @@ def _show_adapt_input(database: DatabaseManager, active_plan: dict):
                 return
 
             with st.spinner("🤖 AI Coach is analyzing and adapting your plan..."):
-                zones = [
-                    st.session_state.get("global_z1", 145),
-                    st.session_state.get("global_z2", 164),
-                    st.session_state.get("global_z3", 174),
-                    st.session_state.get("global_z4", 188),
-                ]
-                coach = AICoach(database, hr_zones=zones)
+                coach = _get_coach(database)
                 chat, plan_text = coach.adapt_plan(adapt_request)
 
                 if chat and plan_text:
@@ -294,13 +306,7 @@ def _show_goal_input(database: DatabaseManager):
             return
 
         with st.spinner("🤖 AI Coach is analyzing your data and building a plan..."):
-            zones = [
-                st.session_state.get("global_z1", 145),
-                st.session_state.get("global_z2", 164),
-                st.session_state.get("global_z3", 174),
-                st.session_state.get("global_z4", 188),
-            ]
-            coach = AICoach(database, hr_zones=zones)
+            coach = _get_coach(database)
             chat, plan_text = coach.generate_plan(user_goal)
 
             if chat and plan_text:
@@ -347,6 +353,7 @@ def _handle_accept(database: DatabaseManager):
     st.session_state.chat_history = []
     st.session_state.plan_accepted = False
     st.success("✅ Plan saved! Check the Calendar tab.")
+    st.session_state.main_nav_radio = "📅 Calendar"
     st.rerun()
 
 
@@ -401,52 +408,49 @@ def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
         st.divider()
 
     # Display chat history
+    chat_container = st.container()
     import re
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            # Hide the JSON block from the output text
-            content = re.sub(r'```json\s*.*?\s*```', '', msg["content"], flags=re.DOTALL)
-            if content.strip():
-                st.markdown(content.strip())
+    with chat_container:
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                # Hide the JSON block from the output text
+                content = re.sub(r'```json\s*.*?\s*```', '', msg["content"], flags=re.DOTALL)
+                if content.strip():
+                    st.markdown(content.strip())
 
     # Chat input for follow-ups
     if prompt := st.chat_input("Ask a follow-up or request changes..."):
         st.session_state.chat_history.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                zones = [
-                    st.session_state.get("global_z1", 145),
-                    st.session_state.get("global_z2", 164),
-                    st.session_state.get("global_z3", 174),
-                    st.session_state.get("global_z4", 188),
-                ]
-                coach = AICoach(database, hr_zones=zones)
-                chat = st.session_state.gemini_chat
-                if chat:
-                    reply = coach.chat(chat, prompt)
-                    st.markdown(reply)
-                    st.session_state.chat_history.append({"role": "assistant", "content": reply})
-                    # Update draft if new JSON is in the reply
-                    new_json = AICoach.parse_plan_json(reply)
-                    if new_json:
-                        st.session_state.draft_plan_text = reply
-                        st.session_state.draft_plan_json = new_json
-                        # Reset the draft calendar view to show the new plan's start month
-                        if "draft_cal_month" in st.session_state:
-                            del st.session_state.draft_cal_month
-                        if "draft_cal_year" in st.session_state:
-                            del st.session_state.draft_cal_year
-                        # Also reset the main Calendar tab view
-                        if "cal_month" in st.session_state:
-                            del st.session_state.cal_month
-                        if "cal_year" in st.session_state:
-                            del st.session_state.cal_year
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    coach = _get_coach(database)
+                    chat = st.session_state.gemini_chat
+                    if chat:
+                        reply = coach.chat(chat, prompt)
+                        st.markdown(reply)
+                        st.session_state.chat_history.append({"role": "assistant", "content": reply})
+                        # Update draft if new JSON is in the reply
+                        new_json = AICoach.parse_plan_json(reply)
+                        if new_json:
+                            st.session_state.draft_plan_text = reply
+                            st.session_state.draft_plan_json = new_json
+                            # Reset the draft calendar view to show the new plan's start month
+                            if "draft_cal_month" in st.session_state:
+                                del st.session_state.draft_cal_month
+                            if "draft_cal_year" in st.session_state:
+                                del st.session_state.draft_cal_year
+                            # Also reset the main Calendar tab view
+                            if "cal_month" in st.session_state:
+                                del st.session_state.cal_month
+                            if "cal_year" in st.session_state:
+                                del st.session_state.cal_year
                         st.rerun()
-                else:
-                    st.error("Chat session lost. Please regenerate.")
+                    else:
+                        st.error("Chat session lost. Please regenerate.")
 
     # JSON debug expander
     import json as _json
@@ -626,13 +630,7 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
 
     if st.button("🔍 Analyze My Week", type="primary", key="analyze_btn"):
         with st.spinner("🤖 Coach is reviewing your training data..."):
-            zones = [
-                st.session_state.get("global_z1", 145),
-                st.session_state.get("global_z2", 164),
-                st.session_state.get("global_z3", 174),
-                st.session_state.get("global_z4", 188),
-            ]
-            coach = AICoach(database, hr_zones=zones)
+            coach = _get_coach(database)
             analysis = coach.analyze_adherence()
             st.session_state["adherence_analysis"] = analysis
 
@@ -659,41 +657,77 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
 
     st.divider()
 
+    # Detailed Activity Feedback
+    st.markdown("### 🔍 Detailed Activity Feedback")
+    st.caption("Select a recent activity to get AI coach feedback.")
+    if "activity_date" in _dataframe.columns:
+        recent_activities = _dataframe.sort_values(by="activity_date", ascending=False).head(20)
+        options = []
+        for _, row in recent_activities.iterrows():
+            date_str = row["activity_date"].strftime("%Y-%m-%d") if pd.notnull(row["activity_date"]) else ""
+            name = row.get("activity_name", "Activity")
+            options.append(f"{date_str} - {name} (ID: {row['activity_id']})")
+        
+        selected_activity = st.selectbox("Choose Activity:", [""] + options)
+        if selected_activity:
+            import re
+            match = re.search(r"\(ID: (\d+)\)$", selected_activity)
+            if match and st.button("Get Feedback", key="detailed_feedback_btn"):
+                st.session_state.pending_feedback_prompt = f"Can you give me detailed feedback on the activity: {selected_activity}?"
+
+    st.divider()
+
     # Coaching chat
-    st.markdown("### 💬 Ask Your Coach")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("### 💬 Ask Your Coach")
+    with col2:
+        if st.button("🔄 Adapt Plan", key="shortcut_adapt_btn", help="Takes you to Plan Generation to adapt your active plan."):
+            st.session_state.is_adapting = True
+            st.session_state.main_nav_radio = "📝 Generate Plan"
+            st.rerun()
 
     if "feedback_chat" not in st.session_state:
         st.session_state.feedback_chat = None
     if "feedback_history" not in st.session_state:
         st.session_state.feedback_history = []
 
-    for msg in st.session_state.feedback_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.feedback_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Ask your coach anything...", key="feedback_chat_input"):
+    prompt = st.chat_input("Ask your coach anything...", key="feedback_chat_input")
+    
+    # Override prompt if a UI button populated the pending request
+    if st.session_state.get("pending_feedback_prompt"):
+        prompt = st.session_state.pop("pending_feedback_prompt")
+
+    if prompt:
         st.session_state.feedback_history.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with chat_container:
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                zones = [
-                    st.session_state.get("global_z1", 145),
-                    st.session_state.get("global_z2", 164),
-                    st.session_state.get("global_z3", 174),
-                    st.session_state.get("global_z4", 188),
-                ]
-                coach = AICoach(database, hr_zones=zones)
-                if not st.session_state.feedback_chat:
-                    chat = coach.client.chats.create(
-                        model=coach.model_id, config={"tools": coach.tools}
-                    )
-                    st.session_state.feedback_chat = chat
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    coach = _get_coach(database)
+                    if not st.session_state.feedback_chat:
+                        import google.genai.types as types
+                        chat = coach.client.chats.create(
+                            model=coach.model_id, 
+                            config=types.GenerateContentConfig(
+                                system_instruction=coach._coach_system_instruction,
+                                tools=coach.tools
+                            )
+                        )
+                        st.session_state.feedback_chat = chat
 
-                reply = coach.chat(st.session_state.feedback_chat, prompt)
-                st.markdown(reply)
-                st.session_state.feedback_history.append({"role": "assistant", "content": reply})
+                    reply = coach.chat(st.session_state.feedback_chat, prompt)
+                    st.markdown(reply)
+                    st.session_state.feedback_history.append({"role": "assistant", "content": reply})
+                    st.rerun()
 
 
 def _sync_planned_workouts_with_activities(database: DatabaseManager, df: pd.DataFrame):
@@ -748,14 +782,35 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
     # Ensure new tables exist
     database.create_tables()
 
-    # Auto-sync incomplete planned workouts with actual activities
     _sync_planned_workouts_with_activities(database, dataframe)
 
-    tab1, tab2, tab3 = st.tabs(["📝 Generate Plan", "📅 Calendar", "💬 Feedback & Chat"])
+    tab_names = ["📝 Generate Plan", "📅 Calendar", "💬 Feedback & Chat"]
+    
+    if "main_nav_radio" not in st.session_state:
+        st.session_state.main_nav_radio = tab_names[0]
 
-    with tab1:
+    st.markdown("""
+        <style>
+        div[role='radiogroup'] {
+            flex-direction: row;
+            gap: 20px;
+            padding: 10px 0 20px 0;
+            border-bottom: 2px solid rgba(255,255,255,0.1);
+            margin-bottom: 20px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    nav_selection = st.radio(
+        "Navigation", 
+        tab_names, 
+        key="main_nav_radio",
+        label_visibility="collapsed"
+    )
+
+    if nav_selection == tab_names[0]:
         _tab_generate_plan(database, dataframe)
-    with tab2:
+    elif nav_selection == tab_names[1]:
         _tab_calendar(database, dataframe)
-    with tab3:
+    else:
         _tab_feedback(database, dataframe)
