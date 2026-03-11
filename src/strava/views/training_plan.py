@@ -637,13 +637,6 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
     if "adherence_analysis" in st.session_state:
         st.markdown(st.session_state["adherence_analysis"])
 
-    if total > 0:
-        adherence_pct = (done / total) * 100
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Completed", f"{done}/{total}")
-        col2.metric("Adherence", f"{adherence_pct:.0f}%")
-        col3.metric("Missed", f"{total - done}")
-
     st.divider()
 
     # Detailed Activity Feedback
