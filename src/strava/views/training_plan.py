@@ -637,17 +637,6 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
     if "adherence_analysis" in st.session_state:
         st.markdown(st.session_state["adherence_analysis"])
 
-    st.divider()
-
-    # Quick stats
-    workouts = plan["workouts"]
-    today_str = datetime.date.today().isoformat()
-    past_workouts = [
-        w for w in workouts if w["workout_date"] <= today_str and w["workout_type"] != "rest"
-    ]
-    done = sum(1 for w in past_workouts if w["completed"])
-    total = len(past_workouts)
-
     if total > 0:
         adherence_pct = (done / total) * 100
         col1, col2, col3 = st.columns(3)
