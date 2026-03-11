@@ -143,7 +143,7 @@ class AICoach:  # pylint: disable=too-few-public-methods
             raise ValueError("GOOGLE_API_KEY not found in environment variables.")
 
         self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-2.5-pro"
+        self.model_id = "gemini-2.5-flash"
         self.db = database or DatabaseManager()
         
         if not hr_zones or len(hr_zones) != 4:
