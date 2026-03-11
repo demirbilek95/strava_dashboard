@@ -178,8 +178,11 @@ def _render_calendar(  # pylint: disable=too-many-locals
                     details = []
                     if w.get("description") and w["workout_type"] != "rest":
                         details.append(w["description"])
-                    if w.get("target_hr_zone"):
-                        details.append(w["target_hr_zone"])
+                    
+                    hr_zone = w.get("target_hr_zone")
+                    if hr_zone and str(hr_zone).lower() not in ("n/a", "none", "null", ""):
+                        details.append(hr_zone)
+                        
                     if details:
                         detail_str = " · ".join(details)
                         html += f'<div class="cal-detail">{detail_str}</div>'
