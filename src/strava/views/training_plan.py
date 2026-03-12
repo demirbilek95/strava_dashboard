@@ -2,10 +2,13 @@
 
 import calendar
 import datetime
+import json
+import re
 from typing import Optional, Dict, Any
 
 import streamlit as st
 import pandas as pd
+import google.genai.types as genai_types
 
 from strava.utils.ai_coach import AICoach
 from strava.db.db_manager import DatabaseManager
@@ -60,7 +63,7 @@ def _get_coach(database: DatabaseManager) -> AICoach:
 # ── Calendar rendering ──────────────────────────────────────────────
 
 
-def _render_calendar(  # pylint: disable=too-many-locals
+def _render_calendar(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     year: int, month: int, workouts: list, activities_df: pd.DataFrame
 ):
     """Render a monthly calendar with planned workouts and actual activities."""
@@ -68,22 +71,16 @@ def _render_calendar(  # pylint: disable=too-many-locals
     month_days = cal.monthdayscalendar(year, month)
     month_name = calendar.month_name[month]
 
-    # Index workouts by date (handle multiple workouts per day)
-    workout_by_date = {}
+    workout_by_date: Dict[str, list] = {}
     for w in workouts:
         date_key = w["workout_date"]
-        if date_key not in workout_by_date:
-            workout_by_date[date_key] = []
-        workout_by_date[date_key].append(w)
+        workout_by_date.setdefault(date_key, []).append(w)
 
-    # Index actual activities by date
-    activity_by_date = {}
+    activity_by_date: Dict[str, list] = {}
     if not activities_df.empty and "activity_date" in activities_df.columns:
         for _, row in activities_df.iterrows():
             date_key = row["activity_date"].strftime("%Y-%m-%d")
-            if date_key not in activity_by_date:
-                activity_by_date[date_key] = []
-            activity_by_date[date_key].append(row)
+            activity_by_date.setdefault(date_key, []).append(row)
 
     today = datetime.date.today()
 
@@ -123,12 +120,17 @@ def _render_calendar(  # pylint: disable=too-many-locals
 
     html = css + f'<h3 style="text-align:center;color:#ddd;">{month_name} {year}</h3>'
     html += '<div class="cal-grid">'
-
-    # Headers
     for day_name in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
         html += f'<div class="cal-header">{day_name}</div>'
 
-    # Days
+    activity_emoji = {
+        "Run": "🏃", "Ride": "🚴", "Swim": "🏊", "Walk": "🚶",
+        "Hike": "🧗", "Workout": "💪", "WeightTraining": "💪",
+        "Yoga": "🧘", "Pilates": "🧘", "Crossfit": "💪",
+        "Rowing": "🚣", "Soccer": "⚽", "Tennis": "🎾",
+    }
+    icon_map = {"completed": "✅", "missed": "❌", "upcoming": "📋", "rest": "😴"}
+
     for week in month_days:
         for day in week:
             if day == 0:
@@ -139,94 +141,58 @@ def _render_calendar(  # pylint: disable=too-many-locals
             date_str = date_obj.isoformat()
             is_today = date_obj == today
             classes = "cal-day" + (" today" if is_today else "")
-
             html += f'<div class="{classes}">'
             html += f'<div class="cal-day-num">{day}</div>'
 
-            # Planned workouts
-            if date_str in workout_by_date:
-                for w in workout_by_date[date_str]:
-                    color = _get_workout_color(w["workout_type"])
-                    status = _get_status(w)
-                    opacity = "0.5" if status == "missed" else "1.0"
-                    icon = {"completed": "✅", "missed": "❌", "upcoming": "📋", "rest": "😴"}
-                    label = w["workout_type"].replace("_", " ").title()
+            for w in workout_by_date.get(date_str, []):
+                color = _get_workout_color(w["workout_type"])
+                status = _get_status(w)
+                opacity = "0.5" if status == "missed" else "1.0"
+                label = w["workout_type"].replace("_", " ").title()
 
-                    # Build prominent stats: distance + pace
-                    stats_parts = []
-                    dist = w.get("target_distance_km")
-                    if dist and str(dist).lower() not in ("n/a", "none", "null", ""):
-                        stats_parts.append(f"{dist}km")
-                    
-                    pace_val = w.get("target_pace_min_km")
-                    if pace_val and str(pace_val).lower() not in ("n/a", "none", "null", ""):
-                        try:
-                            pace_val = float(pace_val)
-                            mins = int(pace_val)
-                            secs = int((pace_val - mins) * 60)
-                            stats_parts.append(f"{mins}:{secs:02d}/km")
-                        except ValueError:
-                            stats_parts.append(f"{pace_val}/km")
-                    
-                    stats_str = f" · {' · '.join(stats_parts)}" if stats_parts else ""
+                stats_parts = []
+                dist = w.get("target_distance_km")
+                if dist and str(dist).lower() not in ("n/a", "none", "null", ""):
+                    stats_parts.append(f"{dist}km")
+                pace_val = w.get("target_pace_min_km")
+                if pace_val and str(pace_val).lower() not in ("n/a", "none", "null", ""):
+                    try:
+                        pv = float(pace_val)
+                        mins, secs = int(pv), int((pv - int(pv)) * 60)
+                        stats_parts.append(f"{mins}:{secs:02d}/km")
+                    except ValueError:
+                        stats_parts.append(f"{pace_val}/km")
+                stats_str = f" · {' · '.join(stats_parts)}" if stats_parts else ""
 
-                    html += (
-                        f'<div class="cal-workout" style="background:{color};opacity:{opacity}">'
-                        f"{icon.get(status, '')} {label}{stats_str}</div>"
-                    )
-                    # Secondary detail line: description and HR zone
-                    details = []
-                    if w.get("description") and w["workout_type"] != "rest":
-                        details.append(w["description"])
-                    
-                    hr_zone = w.get("target_hr_zone")
-                    if hr_zone and str(hr_zone).lower() not in ("n/a", "none", "null", ""):
-                        details.append(hr_zone)
-                        
-                    if details:
-                        detail_str = " · ".join(details)
-                        html += f'<div class="cal-detail">{detail_str}</div>'
+                html += (
+                    f'<div class="cal-workout" style="background:{color};opacity:{opacity}">'
+                    f"{icon_map.get(status, '')} {label}{stats_str}</div>"
+                )
+                details = []
+                if w.get("description") and w["workout_type"] != "rest":
+                    details.append(w["description"])
+                hr_zone = w.get("target_hr_zone")
+                if hr_zone and str(hr_zone).lower() not in ("n/a", "none", "null", ""):
+                    details.append(hr_zone)
+                if details:
+                    html += f'<div class="cal-detail">{" · ".join(details)}</div>'
 
-            # Actual activity
-            if date_str in activity_by_date:
-                ACTIVITY_EMOJI = {
-                    "Run": "🏃",
-                    "Ride": "🚴",
-                    "Swim": "🏊",
-                    "Walk": "🚶",
-                    "Hike": "🧗",
-                    "Workout": "💪",
-                    "WeightTraining": "💪",
-                    "Yoga": "🧘",
-                    "Pilates": "🧘",
-                    "Crossfit": "💪",
-                    "Rowing": "🚣",
-                    "Soccer": "⚽",
-                    "Tennis": "🎾",
-                }
-                for act in activity_by_date[date_str][:4]:
-                    a_type = act.get("activity_type", "")
-                    emoji = ACTIVITY_EMOJI.get(a_type, "📊")
-                    name = act.get("activity_name", a_type or "Activity")
-                    
-                    raw_dist = act.get("distance", 0)
-                    # distance column is already in km (converted by SQL)
-                    dist = f"{raw_dist:.1f}k" if pd.notnull(raw_dist) and raw_dist >= 0.1 else ""
-                    
-                    # Pace: only for distance-based activities
-                    pace = ""
-                    if dist and pd.notnull(act.get("moving_time")) and act["moving_time"] > 0:
-                        pace_dec = (act["moving_time"] / 60) / raw_dist
-                        mins = int(pace_dec)
-                        secs = int((pace_dec - mins) * 60)
-                        pace = f"{mins}:{secs:02d}/k"
-                    
-                    hr_val = act.get("average_heart_rate")
-                    hr = f"{int(hr_val)}bpm" if pd.notnull(hr_val) and hr_val else ""
-                    
-                    stats = " · ".join([d for d in [dist, pace, hr] if d])
-                    label = stats if stats else name
-                    html += f'<div class="cal-actual" title="{name}">{emoji} {label}</div>'
+            for act in activity_by_date.get(date_str, [])[:4]:
+                a_type = act.get("activity_type", "")
+                emoji = activity_emoji.get(a_type, "📊")
+                name = act.get("activity_name", a_type or "Activity")
+                raw_dist = act.get("distance", 0)
+                dist_str = f"{raw_dist:.1f}k" if pd.notnull(raw_dist) and raw_dist >= 0.1 else ""
+                pace = ""
+                if dist_str and pd.notnull(act.get("moving_time")) and act["moving_time"] > 0:
+                    pace_dec = (act["moving_time"] / 60) / raw_dist
+                    mins, secs = int(pace_dec), int((pace_dec - int(pace_dec)) * 60)
+                    pace = f"{mins}:{secs:02d}/k"
+                hr_val = act.get("average_heart_rate")
+                hr = f"{int(hr_val)}bpm" if pd.notnull(hr_val) and hr_val else ""
+                stats = " · ".join(d for d in [dist_str, pace, hr] if d)
+                label = stats if stats else name
+                html += f'<div class="cal-actual" title="{name}">{emoji} {label}</div>'
 
             html += "</div>"
 
@@ -245,60 +211,65 @@ def _show_active_plan(database: DatabaseManager, active_plan: dict):
         f"{len(active_plan['workouts'])} workouts"
     )
     if active_plan.get("raw_llm_response"):
-        with st.expander("View full plan"):
+        with st.expander("📖 View full plan details"):
             st.markdown(active_plan["raw_llm_response"])
-            
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("📝 Create New Plan (archives current)", key="new_plan_btn"):
             database.archive_plan(active_plan["plan_id"])
             st.rerun()
     with col2:
-        if st.button("🔄 Adapt Plan", key="adapt_plan_btn"):
+        if st.button("🔄 Adapt Current Plan", key="adapt_plan_btn"):
             st.session_state.is_adapting = True
             st.rerun()
+
 
 def _show_adapt_input(database: DatabaseManager, active_plan: dict):
     """Show input form for adapting an existing plan."""
     st.markdown("### 🔄 Adapt Your Plan")
-    st.info("Tell the AI Coach what changed. For example: 'I missed my long run on Sunday, can we move it to Tuesday?'")
+    st.info(
+        "Tell the AI Coach what changed — e.g. 'I missed my long run Sunday, "
+        "move it to Tuesday' or 'add an extra rest day this week'."
+    )
     adapt_request = st.text_area("What would you like to change?", key="adapt_input")
-    
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🚀 Adapt Plan", type="primary"):
             if not adapt_request:
                 st.error("Please enter your request first.")
                 return
-
-            with st.spinner("🤖 AI Coach is analyzing and adapting your plan..."):
+            with st.spinner("🤖 AI Coach is analysing and adapting your plan..."):
                 coach = _get_coach(database)
                 chat, plan_text = coach.adapt_plan(adapt_request)
 
-                if chat and plan_text:
-                    st.session_state.draft_plan_text = plan_text
-                    st.session_state.draft_plan_json = AICoach.parse_plan_json(plan_text)
-                    st.session_state.gemini_chat = chat
-                    st.session_state.user_goal = active_plan["goal"]
-                    st.session_state.chat_history = [{"role": "assistant", "content": plan_text}]
-                    st.session_state.is_adapting = False
-                    st.session_state.adapting_plan_id = active_plan["plan_id"]
-                    st.rerun()
-                else:
-                    st.error(plan_text)
+            if chat and plan_text:
+                st.session_state.draft_plan_text = plan_text
+                st.session_state.draft_plan_json = AICoach.parse_plan_json(plan_text)
+                st.session_state.gemini_chat = chat
+                st.session_state.user_goal = active_plan["goal"]
+                st.session_state.chat_history = [{"role": "assistant", "content": plan_text}]
+                st.session_state.is_adapting = False
+                st.session_state.adapting_plan_id = active_plan["plan_id"]
+                st.session_state.nav_target = "📝 Create / Adapt Plan"
+                st.rerun()
+            else:
+                st.error(plan_text)
     with col2:
         if st.button("Cancel"):
             st.session_state.is_adapting = False
             st.rerun()
 
 
-def _show_goal_input(database: DatabaseManager):
+def _show_goal_input(database: DatabaseManager):  # pylint: disable=unused-argument
     """Show goal input form and handle plan generation."""
     user_goal = st.text_area(
         "What is your running goal?",
         height=100,
         placeholder=(
-            "e.g. I want to run a sub-4 hour marathon in 3 months. " + "I train 4 times a week."
+            "e.g. I want to run a sub-4 hour marathon in 3 months. "
+            "I train 4 times a week."
         ),
         key="goal_input",
     )
@@ -307,20 +278,19 @@ def _show_goal_input(database: DatabaseManager):
         if not user_goal:
             st.error("Please enter a goal first.")
             return
-
-        with st.spinner("🤖 AI Coach is analyzing your data and building a plan..."):
+        with st.spinner("🤖 AI Coach is analysing your data and building a plan..."):
             coach = _get_coach(database)
             chat, plan_text = coach.generate_plan(user_goal)
 
-            if chat and plan_text:
-                st.session_state.draft_plan_text = plan_text
-                st.session_state.draft_plan_json = AICoach.parse_plan_json(plan_text)
-                st.session_state.gemini_chat = chat
-                st.session_state.user_goal = user_goal
-                st.session_state.chat_history = [{"role": "assistant", "content": plan_text}]
-                st.rerun()
-            else:
-                st.error(plan_text)
+        if chat and plan_text:
+            st.session_state.draft_plan_text = plan_text
+            st.session_state.draft_plan_json = AICoach.parse_plan_json(plan_text)
+            st.session_state.gemini_chat = chat
+            st.session_state.user_goal = user_goal
+            st.session_state.chat_history = [{"role": "assistant", "content": plan_text}]
+            st.rerun()
+        else:
+            st.error(plan_text)
 
 
 def _handle_accept(database: DatabaseManager):
@@ -328,7 +298,8 @@ def _handle_accept(database: DatabaseManager):
     plan_json = st.session_state.draft_plan_json
     if not plan_json:
         st.error(
-            "Could not parse the plan structure. " + "Ask the coach to regenerate the JSON block."
+            "Could not parse the plan structure. "
+            "Ask the coach to regenerate the JSON block."
         )
         return
 
@@ -336,7 +307,7 @@ def _handle_accept(database: DatabaseManager):
         if st.session_state.get("adapting_plan_id"):
             database.archive_plan(st.session_state.adapting_plan_id)
             st.session_state.adapting_plan_id = None
-            
+
         plan_id = database.insert_training_plan(
             {
                 "goal": st.session_state.user_goal,
@@ -346,7 +317,6 @@ def _handle_accept(database: DatabaseManager):
                 "raw_llm_response": st.session_state.draft_plan_text,
             }
         )
-
         workout_records = AICoach.plan_json_to_workouts(plan_id, plan_json)
         database.insert_planned_workouts(workout_records)
 
@@ -355,21 +325,21 @@ def _handle_accept(database: DatabaseManager):
     st.session_state.gemini_chat = None
     st.session_state.chat_history = []
     st.session_state.plan_accepted = False
-    st.success("✅ Plan saved! Check the Calendar tab.")
-    st.session_state.main_nav_radio = "📅 Calendar"
+    st.success("✅ Plan saved! Check the **Calendar** tab.")
+    # Use nav_target so we don't mutate the already-instantiated radio widget
+    st.session_state.nav_target = "📅 Calendar"
     st.rerun()
 
 
 def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
     """Show draft plan preview with chat and accept/regenerate buttons."""
     st.markdown("### 📋 Draft Training Plan")
-    st.caption("Review the plan below. You can ask follow-up questions or request changes.")
+    st.caption("Review the plan below. Ask follow-up questions or request changes before accepting.")
 
-    # Show Calendar of the current draft
     plan_json = st.session_state.draft_plan_json
     if plan_json and "weeks" in plan_json:
         workouts = AICoach.plan_json_to_workouts(0, plan_json)
-        
+
         today = datetime.date.today()
         default_year, default_month = today.year, today.month
         if workouts:
@@ -381,13 +351,12 @@ def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
                     default_year, default_month = dt.year, dt.month
                 except ValueError:
                     pass
-            
+
         col1, _, col3 = st.columns([1, 2, 1])
         with col1:
             if st.button("◀ Previous", key="draft_cal_prev"):
-                if "draft_cal_month" not in st.session_state:
-                    st.session_state.draft_cal_month = default_month
-                    st.session_state.draft_cal_year = default_year
+                st.session_state.setdefault("draft_cal_month", default_month)
+                st.session_state.setdefault("draft_cal_year", default_year)
                 st.session_state.draft_cal_month -= 1
                 if st.session_state.draft_cal_month < 1:
                     st.session_state.draft_cal_month = 12
@@ -395,9 +364,8 @@ def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
                 st.rerun()
         with col3:
             if st.button("Next ▶", key="draft_cal_next"):
-                if "draft_cal_month" not in st.session_state:
-                    st.session_state.draft_cal_month = default_month
-                    st.session_state.draft_cal_year = default_year
+                st.session_state.setdefault("draft_cal_month", default_month)
+                st.session_state.setdefault("draft_cal_year", default_year)
                 st.session_state.draft_cal_month += 1
                 if st.session_state.draft_cal_month > 12:
                     st.session_state.draft_cal_month = 1
@@ -406,28 +374,23 @@ def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
 
         year = st.session_state.get("draft_cal_year", default_year)
         month = st.session_state.get("draft_cal_month", default_month)
-        
         _render_calendar(year, month, workouts, dataframe)
         st.divider()
 
-    # Display chat history
     chat_container = st.container()
-    import re
     with chat_container:
         for msg in st.session_state.chat_history:
             with st.chat_message(msg["role"]):
-                # Hide the JSON block from the output text
-                content = re.sub(r'```json\s*.*?\s*```', '', msg["content"], flags=re.DOTALL)
+                # Strip JSON block from display text
+                content = re.sub(r"```json\s*.*?\s*```", "", msg["content"], flags=re.DOTALL)
                 if content.strip():
                     st.markdown(content.strip())
 
-    # Chat input for follow-ups
     if prompt := st.chat_input("Ask a follow-up or request changes..."):
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         with chat_container:
             with st.chat_message("user"):
                 st.markdown(prompt)
-
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     coach = _get_coach(database)
@@ -435,53 +398,38 @@ def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
                     if chat:
                         reply = coach.chat(chat, prompt)
                         st.markdown(reply)
-                        st.session_state.chat_history.append({"role": "assistant", "content": reply})
-                        # Update draft if new JSON is in the reply
+                        st.session_state.chat_history.append(
+                            {"role": "assistant", "content": reply}
+                        )
                         new_json = AICoach.parse_plan_json(reply)
                         if new_json:
                             st.session_state.draft_plan_text = reply
                             st.session_state.draft_plan_json = new_json
-                            # Reset the draft calendar view to show the new plan's start month
-                            if "draft_cal_month" in st.session_state:
-                                del st.session_state.draft_cal_month
-                            if "draft_cal_year" in st.session_state:
-                                del st.session_state.draft_cal_year
-                            # Also reset the main Calendar tab view
-                            if "cal_month" in st.session_state:
-                                del st.session_state.cal_month
-                            if "cal_year" in st.session_state:
-                                del st.session_state.cal_year
+                            for key in ("draft_cal_month", "draft_cal_year",
+                                        "cal_month", "cal_year"):
+                                st.session_state.pop(key, None)
                         st.rerun()
                     else:
                         st.error("Chat session lost. Please regenerate.")
 
-    # JSON debug expander
-    import json as _json
     if st.session_state.get("draft_plan_json"):
         with st.expander("🔍 View Raw Plan JSON (for debugging)", expanded=False):
-            st.code(
-                _json.dumps(st.session_state.draft_plan_json, indent=2),
-                language="json",
-            )
+            st.code(json.dumps(st.session_state.draft_plan_json, indent=2), language="json")
 
-    # Accept / Regenerate buttons
     col1, col2 = st.columns(2)
     with col1:
         if st.button("✅ Accept Plan", type="primary", key="accept_btn"):
             _handle_accept(database)
-
     with col2:
         if st.button("🔄 Start Over", key="regenerate_btn"):
-            st.session_state.draft_plan_text = None
-            st.session_state.draft_plan_json = None
-            st.session_state.gemini_chat = None
+            for key in ("draft_plan_text", "draft_plan_json", "gemini_chat"):
+                st.session_state[key] = None
             st.session_state.chat_history = []
             st.rerun()
 
 
 def _tab_generate_plan(database: DatabaseManager, dataframe: pd.DataFrame):
     """Plan generation tab with preview → accept flow."""
-    # Session state init
     for key, default in [
         ("draft_plan_text", None),
         ("draft_plan_json", None),
@@ -490,12 +438,10 @@ def _tab_generate_plan(database: DatabaseManager, dataframe: pd.DataFrame):
         ("plan_accepted", False),
         ("user_goal", ""),
     ]:
-        if key not in st.session_state:
-            st.session_state[key] = default
+        st.session_state.setdefault(key, default)
 
     active_plan = database.get_active_plan()
 
-    # If there's already an accepted plan in the DB
     if active_plan and not st.session_state.draft_plan_text:
         if st.session_state.get("is_adapting"):
             _show_adapt_input(database, active_plan)
@@ -503,12 +449,10 @@ def _tab_generate_plan(database: DatabaseManager, dataframe: pd.DataFrame):
             _show_active_plan(database, active_plan)
         return
 
-    # No draft yet — show goal input
     if not st.session_state.draft_plan_text:
         _show_goal_input(database)
         return
 
-    # Draft exists — show preview + chat + accept/regenerate
     _show_draft_review(database, dataframe)
 
 
@@ -519,7 +463,6 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
     """Calendar tab showing planned workouts and actual activities."""
     plan = database.get_active_plan()
 
-    # Fall back to draft plan in session state if no accepted plan yet
     using_draft = False
     if not plan:
         draft_json = st.session_state.get("draft_plan_json")
@@ -543,14 +486,11 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
     st.markdown(f"**Goal:** {plan['goal']}")
 
     today = datetime.date.today()
-
-    # Month navigation
     col1, _, col3 = st.columns([1, 2, 1])
     with col1:
         if st.button("◀ Previous", key="cal_prev"):
-            if "cal_month" not in st.session_state:
-                st.session_state.cal_month = today.month
-                st.session_state.cal_year = today.year
+            st.session_state.setdefault("cal_month", today.month)
+            st.session_state.setdefault("cal_year", today.year)
             st.session_state.cal_month -= 1
             if st.session_state.cal_month < 1:
                 st.session_state.cal_month = 12
@@ -558,16 +498,14 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
             st.rerun()
     with col3:
         if st.button("Next ▶", key="cal_next"):
-            if "cal_month" not in st.session_state:
-                st.session_state.cal_month = today.month
-                st.session_state.cal_year = today.year
+            st.session_state.setdefault("cal_month", today.month)
+            st.session_state.setdefault("cal_year", today.year)
             st.session_state.cal_month += 1
             if st.session_state.cal_month > 12:
                 st.session_state.cal_month = 1
                 st.session_state.cal_year += 1
             st.rerun()
 
-    # Default to the plan's start month instead of today
     default_year, default_month = today.year, today.month
     if plan.get("start_date"):
         try:
@@ -578,10 +516,8 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
 
     year = st.session_state.get("cal_year", default_year)
     month = st.session_state.get("cal_month", default_month)
-
     _render_calendar(year, month, plan["workouts"], dataframe)
 
-    # Legend
     st.markdown("---")
     legend_items = [
         ("🟢 Easy Run", "#4CAF50"),
@@ -591,26 +527,31 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
         ("🟣 Cross Training", "#9C27B0"),
         ("⚪ Rest", "#9E9E9E"),
     ]
-    cols = st.columns(len(legend_items))
-    for col, (label, color) in zip(cols, legend_items):
+    for col, (label, color) in zip(st.columns(len(legend_items)), legend_items):
         col.markdown(
             f'<span style="color:{color};font-size:12px">{label}</span>',
             unsafe_allow_html=True,
         )
 
-    # Weekly summary below calendar
     st.markdown("### 📊 Weekly Breakdown")
     workouts = plan["workouts"]
     if workouts:
         wdf = pd.DataFrame(workouts)
         wdf["workout_date"] = pd.to_datetime(wdf["workout_date"])
         wdf["week"] = wdf["workout_date"].dt.isocalendar().week
-
         for week_num, group in wdf.groupby("week"):
-            total_dist = group["target_distance_km"].sum() if "target_distance_km" in wdf.columns else 0
+            total_dist = (
+                group["target_distance_km"].sum()
+                if "target_distance_km" in wdf.columns
+                else 0
+            )
             n_workouts = len(group[group["workout_type"] != "rest"])
             completed = group["completed"].sum() if "completed" in wdf.columns else 0
-            dist_str = f"{total_dist:.1f}km planned, " if pd.notnull(total_dist) and total_dist > 0 else ""
+            dist_str = (
+                f"{total_dist:.1f}km planned, "
+                if pd.notnull(total_dist) and total_dist > 0
+                else ""
+            )
             st.markdown(
                 f"**Week {week_num}**: {n_workouts} workouts, "
                 f"{dist_str}{int(completed)} completed"
@@ -620,18 +561,44 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
 # ── Tab 3: Feedback & Chat ──────────────────────────────────────────
 
 
-def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
+def _tab_feedback(database: DatabaseManager, dataframe: pd.DataFrame):
     """Feedback tab with adherence analysis and coaching chat."""
     plan = database.get_active_plan()
 
     if not plan:
-        st.info("No active training plan. Generate one in the **Generate Plan** tab.")
+        st.info("No active training plan. Generate one in the **Create / Adapt Plan** tab.")
         return
 
-    # Adherence analysis
-    st.markdown("### 📈 Plan Adherence Analysis")
+    # ── Active Plan Summary ──────────────────────────────────────────
+    with st.expander("📋 Active Training Plan — click to view", expanded=False):
+        st.markdown(f"**Goal:** {plan['goal']}")
+        st.markdown(
+            f"**Period:** {plan['start_date']} → {plan.get('end_date', 'ongoing')} "
+            f"| **{len(plan['workouts'])} workouts total**"
+        )
+        today_str = datetime.date.today().isoformat()
+        upcoming = [
+            w for w in plan["workouts"]
+            if w["workout_date"] >= today_str and w["workout_type"] != "rest"
+        ][:5]
+        if upcoming:
+            st.markdown("**Next workouts:**")
+            for w in upcoming:
+                dist = f" · {w['target_distance_km']}km" if w.get("target_distance_km") else ""
+                st.markdown(
+                    f"- `{w['workout_date']}` "
+                    f"{w['workout_type'].replace('_', ' ').title()}"
+                    f"{dist} — {w.get('description', '')}"
+                )
+        st.caption(
+            "To modify your plan, go to **Create / Adapt Plan** → **🔄 Adapt Current Plan**."
+        )
 
-    if st.button("🔍 Analyze My Week", type="primary", key="analyze_btn"):
+    st.divider()
+
+    # ── Adherence Analysis ──────────────────────────────────────────
+    st.markdown("### 📈 Plan Adherence Analysis")
+    if st.button("🔍 Analyse My Week", type="primary", key="analyze_btn"):
         with st.spinner("🤖 Coach is reviewing your training data..."):
             coach = _get_coach(database)
             analysis = coach.analyze_adherence()
@@ -642,40 +609,41 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
 
     st.divider()
 
-    # Detailed Activity Feedback
-    st.markdown("### 🔍 Detailed Activity Feedback")
-    st.caption("Select a recent activity to get AI coach feedback.")
-    if "activity_date" in _dataframe.columns:
-        recent_activities = _dataframe.sort_values(by="activity_date", ascending=False).head(20)
-        options = []
-        for _, row in recent_activities.iterrows():
-            date_str = row["activity_date"].strftime("%Y-%m-%d") if pd.notnull(row["activity_date"]) else ""
-            name = row.get("activity_name", "Activity")
-            options.append(f"{date_str} - {name} (ID: {row['activity_id']})")
-        
+    # ── Detailed Activity Feedback ──────────────────────────────────
+    st.markdown("### 🔍 Activity Feedback")
+    st.caption("Get detailed per-km coaching feedback on a recent activity.")
+
+    if "activity_date" in dataframe.columns:
+        recent = dataframe.sort_values(by="activity_date", ascending=False).head(20)
+        options = [
+            f"{row['activity_date'].strftime('%Y-%m-%d')} - "
+            f"{row.get('activity_name', 'Activity')} (ID: {row['activity_id']})"
+            if pd.notnull(row["activity_date"]) else
+            f"Unknown date - {row.get('activity_name', 'Activity')} (ID: {row['activity_id']})"
+            for _, row in recent.iterrows()
+        ]
         selected_activity = st.selectbox("Choose Activity:", [""] + options)
         if selected_activity:
-            import re
             match = re.search(r"\(ID: (\d+)\)$", selected_activity)
-            if match and st.button("Get Feedback", key="detailed_feedback_btn"):
-                st.session_state.pending_feedback_prompt = f"Can you give me detailed feedback on the activity: {selected_activity}?"
+            if match and st.button("Get Coaching Feedback", key="detailed_feedback_btn"):
+                st.session_state.pending_feedback_prompt = (
+                    f"Please give me detailed coaching feedback on this activity: "
+                    f"{selected_activity}. "
+                    "Use both get_km_splits and get_activity_details to give me specific "
+                    "per-km pace, HR, and zone data. Quote exact numbers from the tools."
+                )
 
     st.divider()
 
-    # Coaching chat
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.markdown("### 💬 Ask Your Coach")
-    with col2:
-        if st.button("🔄 Adapt Plan", key="shortcut_adapt_btn", help="Takes you to Plan Generation to adapt your active plan."):
-            st.session_state.is_adapting = True
-            st.session_state.main_nav_radio = "📝 Generate Plan"
-            st.rerun()
+    # ── Coaching Chat ──────────────────────────────────────────────
+    st.markdown("### 💬 Ask Your Coach")
+    st.caption(
+        "Chat about any aspect of your training. "
+        "To adjust your plan, go to **Create / Adapt Plan → 🔄 Adapt Current Plan**."
+    )
 
-    if "feedback_chat" not in st.session_state:
-        st.session_state.feedback_chat = None
-    if "feedback_history" not in st.session_state:
-        st.session_state.feedback_history = []
+    st.session_state.setdefault("feedback_chat", None)
+    st.session_state.setdefault("feedback_history", [])
 
     chat_container = st.container()
     with chat_container:
@@ -684,8 +652,7 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
                 st.markdown(msg["content"])
 
     prompt = st.chat_input("Ask your coach anything...", key="feedback_chat_input")
-    
-    # Override prompt if a UI button populated the pending request
+
     if st.session_state.get("pending_feedback_prompt"):
         prompt = st.session_state.pop("pending_feedback_prompt")
 
@@ -694,66 +661,62 @@ def _tab_feedback(database: DatabaseManager, _dataframe: pd.DataFrame):
         with chat_container:
             with st.chat_message("user"):
                 st.markdown(prompt)
-
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     coach = _get_coach(database)
                     if not st.session_state.feedback_chat:
-                        import google.genai.types as types
-                        chat = coach.client.chats.create(
-                            model=coach.model_id, 
-                            config=types.GenerateContentConfig(
+                        chat_session = coach.client.chats.create(
+                            model=coach.model_id,
+                            config=genai_types.GenerateContentConfig(
                                 system_instruction=coach._coach_system_instruction,
-                                tools=coach.tools
-                            )
+                                tools=coach.tools,
+                            ),
                         )
-                        st.session_state.feedback_chat = chat
-
+                        st.session_state.feedback_chat = chat_session
                     reply = coach.chat(st.session_state.feedback_chat, prompt)
                     st.markdown(reply)
-                    st.session_state.feedback_history.append({"role": "assistant", "content": reply})
+                    st.session_state.feedback_history.append(
+                        {"role": "assistant", "content": reply}
+                    )
                     st.rerun()
 
 
-def _sync_planned_workouts_with_activities(database: DatabaseManager, df: pd.DataFrame):
+def _sync_planned_workouts_with_activities(
+    database: DatabaseManager, df: pd.DataFrame
+):
     """Auto-match activities in the dataframe to incomplete planned workouts."""
     plan = database.get_active_plan()
     if not plan or df.empty:
         return
 
     today_str = datetime.date.today().isoformat()
-    workouts = plan.get("workouts", [])
-    
-    # Process only past/present workouts that aren't completed and aren't rest days
-    incomplete_workouts = [
-        w for w in workouts
+    incomplete = [
+        w
+        for w in plan.get("workouts", [])
         if w["workout_date"] <= today_str
         and w["workout_type"] != "rest"
         and not w.get("completed")
     ]
 
-    for w in incomplete_workouts:
-        w_date_str = w["workout_date"]
-        
-        # Look for activities on this date
-        if "activity_date" in df.columns:
-            day_activities = df[df["activity_date"].dt.strftime('%Y-%m-%d') == w_date_str]
-            
-            if not day_activities.empty:
-                # Simple matching: pick the longest activity of the day
-                best_match = day_activities.sort_values(by="distance", ascending=False).iloc[0]
-                
-                database.update_workout_completion(
-                    workout_id=w["workout_id"],
-                    activity_id=int(best_match["activity_id"]),
-                    feedback="Auto-matched via Strava sync"
-                )
+    for w in incomplete:
+        if "activity_date" not in df.columns:
+            break
+        day_activities = df[df["activity_date"].dt.strftime("%Y-%m-%d") == w["workout_date"]]
+        if not day_activities.empty:
+            best = day_activities.sort_values(by="distance", ascending=False).iloc[0]
+            database.update_workout_completion(
+                workout_id=w["workout_id"],
+                activity_id=int(best["activity_id"]),
+                feedback="Auto-matched via Strava sync",
+            )
 
 
 # ── Main page ────────────────────────────────────────────────────────
 
 
-def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseManager] = None):
+def page_ai_training_plan(
+    dataframe: pd.DataFrame, database: Optional[DatabaseManager] = None
+):
     """AI Coach Training Plan page with 3 tabs."""
     st.header("🤖 AI Coach")
     st.markdown(
@@ -764,17 +727,21 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
     if database is None:
         database = DatabaseManager()
 
-    # Ensure new tables exist
     database.create_tables()
-
     _sync_planned_workouts_with_activities(database, dataframe)
 
-    tab_names = ["📝 Generate Plan", "📅 Calendar", "💬 Feedback & Chat"]
-    
-    if "main_nav_radio" not in st.session_state:
-        st.session_state.main_nav_radio = tab_names[0]
+    tab_names = ["📝 Create / Adapt Plan", "📅 Calendar", "💬 Feedback & Chat"]
 
-    st.markdown("""
+    st.session_state.setdefault("main_nav_radio", tab_names[0])
+
+    # Apply deferred navigation intent BEFORE the widget is instantiated
+    if "nav_target" in st.session_state:
+        target = st.session_state.pop("nav_target")
+        if target in tab_names:
+            st.session_state.main_nav_radio = target
+
+    st.markdown(
+        """
         <style>
         div[role='radiogroup'] {
             flex-direction: row;
@@ -784,13 +751,15 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
             margin-bottom: 20px;
         }
         </style>
-    """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True,
+    )
 
     nav_selection = st.radio(
-        "Navigation", 
-        tab_names, 
+        "Navigation",
+        tab_names,
         key="main_nav_radio",
-        label_visibility="collapsed"
+        label_visibility="collapsed",
     )
 
     if nav_selection == tab_names[0]:
