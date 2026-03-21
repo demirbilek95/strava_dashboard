@@ -97,6 +97,22 @@ COACH_TOOLS = [
                 parameters={"type": "OBJECT", "properties": {}},
             ),
             types.FunctionDeclaration(
+                name="get_race_performances",
+                description=(
+                    "Fetch detailed performance metrics for the athlete's most recent races. "
+                    "Returns distance, moving time, pace, heart rate, and training load for up to the last 5 races."
+                ),
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "limit": {
+                            "type": "INTEGER",
+                            "description": "Number of recent races to retrieve (default 5, max 10)."
+                        }
+                    }
+                },
+            ),
+            types.FunctionDeclaration(
                 name="get_current_plan",
                 description="Retrieve the currently active training plan from the database.",
                 parameters={"type": "OBJECT", "properties": {}},
@@ -253,10 +269,11 @@ class AICoach:
             "3. Always call get_plan_history before generating a new plan to avoid repeating "
             "previous plans and to understand the athlete's long-term trajectory.\n"
             "4. Always call get_training_load_trend to assess fatigue before prescribing load.\n"
-            "5. Give direct, objective, expert coaching advice. "
+            "5. Always call get_race_performances to understand the athlete's actual racing capability.\n"
+            "6. Give direct, objective, expert coaching advice. "
             "Push back firmly on unreasonable requests (too-fast progression, "
             "skipping rest, unrealistic race goals for current fitness).\n"
-            "6. Only add disclaimers about medical advice when strictly necessary."
+            "7. Only add disclaimers about medical advice when strictly necessary."
         )
 
     # ── Private helpers ─────────────────────────────────────────────
@@ -594,6 +611,48 @@ class AICoach:
             lines.append(f"- {date_str}: {row.get('activity_name', 'Race')} | {dist} | {time_str}")
         return "\n".join(lines)
 
+    def _tool_get_race_performances(self, limit: int = 5) -> str:
+        """Fetch detailed analytics for the latest races."""
+        df = self.activities_df
+        if df.empty:
+            return "No activities found."
+
+        races = pd.DataFrame()
+        if "workout_type" in df.columns:
+            races = df[df["workout_type"] == 1]
+        if races.empty:
+            races = df[df["activity_name"].str.contains("race", case=False, na=False)]
+        
+        if races.empty:
+            return "No races found."
+
+        limit = min(limit, 10)
+        lines = [f"Detailed race performances (last {limit} races):"]
+        for _, row in races.head(limit).iterrows():
+            date_str = row["activity_date"].strftime("%Y-%m-%d")
+            name = row.get("activity_name", "Race")
+            
+            dist_m = row.get("distance")
+            dist = f"{dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "N/A"
+            time_str = _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
+            
+            pace = (
+                _pace_from_time_dist(row["moving_time"], dist_m)
+                if pd.notnull(row.get("moving_time")) and pd.notnull(dist_m) and dist_m > 0
+                else "N/A"
+            )
+            hr = f"{int(row['average_heart_rate'])}bpm" if pd.notnull(row.get("average_heart_rate")) else "N/A"
+            
+            score_col = "suffer_score" if "suffer_score" in row and pd.notnull(row["suffer_score"]) else "relative_effort"
+            score = int(row[score_col]) if score_col in row and pd.notnull(row.get(score_col)) else "N/A"
+            elev = f"{row.get('elevation_gain')}m" if pd.notnull(row.get("elevation_gain")) else "N/A"
+
+            lines.append(
+                f"- {date_str} '{name}' | Dist: {dist} | Time: {time_str} | "
+                f"Pace: {pace} | HR: {hr} | Elev: {elev} | Load: {score}"
+            )
+        return "\n".join(lines)
+
     def _tool_get_current_plan(self) -> str:
         """Retrieve and format the currently active training plan."""
         plan = self.db.get_active_plan()
@@ -737,6 +796,7 @@ class AICoach:
             "get_recent_activities": self._tool_get_recent_activities,
             "get_weekly_summary": self._tool_get_weekly_summary,
             "get_race_history": self._tool_get_race_history,
+            "get_race_performances": self._tool_get_race_performances,
             "get_current_plan": self._tool_get_current_plan,
             "compare_plan_vs_actual": self._tool_compare_plan_vs_actual,
             "is_indoor_activity": self._tool_is_indoor_activity,
@@ -777,7 +837,7 @@ Your Mission:
 - STEP 1: Call get_plan_history to understand what plans have been created before.
 - STEP 2: Call get_training_load_trend to assess the athlete's current fatigue level.
 - STEP 3: Call get_recent_activities and get_weekly_summary to understand current fitness.
-- STEP 4: Call get_race_history to understand race performance.
+- STEP 4: Call get_race_performances to understand race capabilities and pace limits.
 - STEP 5 (optional): Use get_activity_details and get_km_splits to analyse key sessions.
 - STEP 6: Create a personalized, realistic training plan based on ALL of the above.
 
@@ -796,8 +856,12 @@ PRO COACHING GUIDELINES:
 1. Easy Run Discipline: 80% of runs should be Zone 2. Check using get_activity_details.
 2. Aerobic Decoupling: Flag HR drift in second half of long runs.
 3. Load Management: Use get_training_load_trend — if acute:chronic > 1.3, start with a "
-   "recovery week before building.
-4. Plan History: If previous plans exist from get_plan_history, build on them — do not "
+   "recovery week before building. Keep track of weekly mileage limits based on get_weekly_summary.
+4. Structured Phases: Always structure the plan into specific phases. For example, if generating a multi-month plan, "
+   "spend the first month building a solid Aerobic Base (mostly Zone 2, increasing weekly mileage and suffer score safely) "
+   "and explicitly monitor progress using load trends and weekly summaries. Progressively introduce specific "
+   "Phase 2/3 speed workouts or intervals closer to the goal race.
+5. Plan History: If previous plans exist from get_plan_history, build on them — do not "
    "repeat the same structure unless it clearly worked (high adherence).
 
 The athlete's goal: {user_goal}
@@ -834,11 +898,12 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
 
 Your Mission:
 - STEP 1: Call get_plan_history to understand the full history of the athlete's plans.
-- STEP 2: Call get_training_load_trend to check current fatigue before prescribing new load.
+- STEP 2: Call get_training_load_trend and get_weekly_summary to check current fatigue and track weekly mileage/suffer score.
 - STEP 3: The athlete already has an active training plan (shown below).
 - You MUST keep past workouts unchanged. Do not alter already-completed sessions.
 - They want to change their plan: "{user_request}"
 - Use compare_plan_vs_actual and get_recent_activities as needed.
+- Monitor training load carefully. Has the weekly suffer score increased too quickly? Adjust load appropriately. 
 - BE COMPLETELY OBJECTIVE. Push back on unreasonable adaptations.
 
 ANTI-HALLUCINATION RULES:
