@@ -22,6 +22,7 @@ SELECT DISTINCT
     a.average_watts,
     a.weighted_average_power,
     a.calories,
+    a.suffer_score,
     a.relative_effort,
     a.total_work,
     a.max_temperature,

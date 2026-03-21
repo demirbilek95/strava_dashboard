@@ -57,6 +57,15 @@ CREATE TABLE IF NOT EXISTS activities (
     trainer BOOLEAN DEFAULT 0,
     gear TEXT,
     filename TEXT,
+
+    -- Strava engagement / effort metrics
+    suffer_score INTEGER,            -- Relative Effort / Suffer Score
+    sport_type TEXT,                 -- Preferred field (replaces deprecated 'type')
+    pr_count INTEGER,                -- Personal records set in this activity
+    achievement_count INTEGER,       -- Total achievements earned
+    kudos_count INTEGER,             -- Social kudos
+    has_kudoed BOOLEAN DEFAULT 0,    -- Whether the authenticated athlete kudoed it
+    perceived_exertion REAL,         -- 1-10 scale (from detailed endpoint only)
     
     -- Metadata
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

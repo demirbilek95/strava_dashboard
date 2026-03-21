@@ -79,19 +79,29 @@ class DatabaseManager:
 
     def _migrate_schema(self):
         """Apply migrations to existing tables."""
-        # Check if workout_type exists in activities
         try:
             columns = self.execute_query("PRAGMA table_info(activities)")
             column_names = [col["name"] for col in columns]
-            if "workout_type" not in column_names:
-                with self.get_connection() as conn:
-                    conn.execute("ALTER TABLE activities ADD COLUMN workout_type INTEGER")
-                print("✓ Added workout_type column to activities table")
-            if "trainer" not in column_names:
-                with self.get_connection() as conn:
-                    conn.execute("ALTER TABLE activities ADD COLUMN trainer BOOLEAN DEFAULT 0")
-                print("✓ Added trainer column to activities table")
-        except Exception as exc:
+
+            new_columns = [
+                ("workout_type", "INTEGER"),
+                ("trainer", "BOOLEAN DEFAULT 0"),
+                ("suffer_score", "INTEGER"),
+                ("sport_type", "TEXT"),
+                ("pr_count", "INTEGER"),
+                ("achievement_count", "INTEGER"),
+                ("kudos_count", "INTEGER"),
+                ("has_kudoed", "BOOLEAN DEFAULT 0"),
+                ("perceived_exertion", "REAL"),
+            ]
+
+            with self.get_connection() as conn:
+                for col_name, col_def in new_columns:
+                    if col_name not in column_names:
+                        conn.execute(f"ALTER TABLE activities ADD COLUMN {col_name} {col_def}")
+                        print(f"✓ Added {col_name} column to activities table")
+
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             print(f"! Migration check failed: {exc}")
 
     def execute_query(self, query: str, params: tuple = ()) -> List[sqlite3.Row]:
@@ -309,3 +319,17 @@ class DatabaseManager:
         """
         with self.get_connection() as conn:
             conn.execute(query, (plan_id,))
+
+    def get_plan_history(self) -> List[Dict[str, Any]]:
+        """Return all training plans (active + archived) ordered by creation date."""
+        rows = self.execute_query(
+            """
+            SELECT plan_id, goal, start_date, end_date, status, created_at,
+                   (SELECT COUNT(*) FROM planned_workouts WHERE plan_id = tp.plan_id) AS workout_count,
+                   (SELECT COUNT(*) FROM planned_workouts
+                    WHERE plan_id = tp.plan_id AND completed = 1) AS completed_count
+            FROM training_plans tp
+            ORDER BY created_at DESC
+            """
+        )
+        return [dict(row) for row in rows]
