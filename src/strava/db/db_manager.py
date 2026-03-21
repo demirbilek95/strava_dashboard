@@ -80,6 +80,13 @@ class DatabaseManager:
     def _migrate_schema(self):
         """Apply migrations to existing tables."""
         try:
+            # Check if activities table exists before migrating
+            table_check = self.execute_query(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='activities'"
+            )
+            if not table_check:
+                return
+
             columns = self.execute_query("PRAGMA table_info(activities)")
             column_names = [col["name"] for col in columns]
 
