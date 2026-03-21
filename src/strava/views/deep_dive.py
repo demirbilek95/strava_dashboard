@@ -6,6 +6,7 @@ import folium
 from streamlit_folium import folium_static
 from strava.data import get_activity_stream, get_activities_with_streams
 from strava.utils.activity_processing import _calculate_metrics, _calculate_splits
+from strava.constants import ZONE_COLORS
 
 
 def _render_hr_analysis(track_df, zones):
@@ -52,7 +53,13 @@ def _render_hr_analysis(track_df, zones):
     for col, head in zip(cols, headers):
         col.markdown(f"**{head}**")
 
-    bar_colors = ["#BDBDBD", "#64B5F6", "#81C784", "#FFB74D", "#E57373"]
+    bar_colors = [
+        ZONE_COLORS["Z1"],
+        ZONE_COLORS["Z2"],
+        ZONE_COLORS["Z3"],
+        ZONE_COLORS["Z4"],
+        ZONE_COLORS["Z5"],
+    ]
 
     for i, row in enumerate(zone_data):
         c = st.columns([1, 2, 2, 1, 1, 3])
@@ -91,7 +98,14 @@ def _render_plots(track_df, zones):
         (hr_zones[2], hr_zones[3]),  # Z4
         (hr_zones[3], 220),  # Z5 (cap at 220 or max HR)
     ]
-    hr_zone_colors = ["#BDBDBD", "#64B5F6", "#81C784", "#FFB74D", "#E57373"]
+    hr_zone_colors = [
+        ZONE_COLORS["Z1"],
+        ZONE_COLORS["Z2"],
+        ZONE_COLORS["Z3"],
+        ZONE_COLORS["Z4"],
+        ZONE_COLORS["Z5"],
+    ]
+
     hr_zone_names = ["Z1", "Z2", "Z3", "Z4", "Z5"]
 
     for i, (z_min, z_max) in enumerate(hr_zone_defs):
@@ -181,9 +195,7 @@ def _render_plots(track_df, zones):
     )
     fig.update_yaxes(title_text="Heart Rate (bpm)", row=4, col=1)
 
-    fig.update_layout(height=850, 
-                      hovermode="x unified", 
-                      showlegend=True)
+    fig.update_layout(height=850, hovermode="x unified", showlegend=True)
     st.plotly_chart(fig)
 
 
@@ -320,7 +332,7 @@ def _display_stats(track_df, selected_row):
     elapsed_s = selected_row.get("elapsed_time", track_df["Elapsed Seconds"].max())
     elev_gain = selected_row.get("elevation_gain", track_df["Elev_Gain_Step"].sum())
 
-    effort = selected_row.get("relative_effort", "N/A")
+    effort = selected_row.get("suffer_score", "N/A")
     calories = selected_row.get("calories", "N/A")
 
     avg_pace_dec = ((moving_s / 60) / dist_km) if dist_km > 0 else 0

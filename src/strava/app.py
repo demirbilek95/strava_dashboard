@@ -36,7 +36,8 @@ def handle_authorization(api: StravaAPI, auth_code: str):
             progress_bar.progress(percent)
 
         with st.spinner(
-            "Importing data from Strava... This may take a while depending on your activity count."
+            "Importing data from Strava… "
+            "Streams are fetched in parallel — this is much faster now!"
         ):
             importer.import_all_data(progress_callback=update_progress)
 
@@ -54,42 +55,86 @@ def handle_authorization(api: StravaAPI, auth_code: str):
 
 
 def show_welcome_page():
-    """Show the welcome page for initial setup."""
-    st.title("🏃 Welcome to Strava Analytics")
-
+    """Show the welcome/onboarding page for initial setup."""
+    # ── Header ──────────────────────────────────────────────────────
     st.markdown(
         """
-    This application allows you to analyze your Strava activities in depth.
-    To get started, follow these steps:
-
-    1. **Authorize the App**: Click the button below to go to Strava and grant permissions.
-    2. **Copy the Code**: After authorizing, you will be redirected to `localhost`.
-       Copy the `code` parameter from the address bar.
-    3. **Connect**: Paste the code below and click 'Complete Connection'.
-    """
+        <div style="text-align:center; padding: 2rem 0 1rem 0;">
+            <h1 style="font-size:3rem; margin-bottom:0.25rem;">🏃 Strava Analytics</h1>
+            <p style="color:#aaa; font-size:1.1rem;">
+                Your personal training dashboard — powered by your Strava data.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    try:
-        api = StravaAPI()
-        auth_url = api.get_authorization_url()
-        st.link_button("🔑 Authorize Strava", auth_url, type="primary")
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        st.error(f"Failed to generate authorization URL: {exc}")
-        st.info("Make sure `STRAVA_CLIENT_ID` is set in your `.env` file.")
+    # ── Steps card ──────────────────────────────────────────────────
+    col_left, col_center, col_right = st.columns([1, 3, 1])
+    with col_center:
+        st.markdown("---")
 
-    st.divider()
+        step1, step2 = st.columns(2)
+        with step1:
+            st.markdown(
+                """
+                <div style="background:rgba(255,255,255,0.05); border-radius:12px;
+                            padding:1.5rem; text-align:center; height:180px;">
+                    <div style="font-size:2.5rem;">🔑</div>
+                    <h3 style="margin:0.5rem 0 0.25rem">Step 1</h3>
+                    <p style="color:#bbb; font-size:0.9rem; margin:0">
+                        Click <b>Connect Strava</b> below to authorise this app.
+                        After granting access, you will be redirected back here automatically.
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with step2:
+            st.markdown(
+                """
+                <div style="background:rgba(255,255,255,0.05); border-radius:12px;
+                            padding:1.5rem; text-align:center; height:180px;">
+                    <div style="font-size:2.5rem;">📊</div>
+                    <h3 style="margin:0.5rem 0 0.25rem">Step 2</h3>
+                    <p style="color:#bbb; font-size:0.9rem; margin:0">
+                        Your activities are imported automatically — streams are
+                        fetched in parallel so it won't take long!
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-    auth_code = st.text_input(
-        "Step 3: Paste Authorization Code here", placeholder="e.g. a1b2c3d4..."
-    )
+        st.markdown("---")
 
-    if st.button("Complete Connection & Import Data"):
-        if not auth_code:
-            st.error("Please paste the authorization code from the Strava redirect URL.")
-            return
+        # ── Primary connect button ───────────────────────────────────
+        try:
+            api = StravaAPI()
+            auth_url = api.get_authorization_url()
+            st.link_button(
+                "🔗 Connect with Strava",
+                auth_url,
+                type="primary",
+                use_container_width=True,
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            st.error(f"Failed to generate authorization URL: {exc}")
+            st.info("Make sure `STRAVA_CLIENT_ID` is set in your `.env` file.")
 
-        api = StravaAPI()
-        handle_authorization(api, auth_code)
+        # ── Fallback: manual code paste ─────────────────────────────
+        with st.expander("⚙️ Manual connection (if automatic redirect didn't work)"):
+            st.caption(
+                "If you weren't redirected back automatically, copy the `code=...` value "
+                "from your browser's address bar and paste it below."
+            )
+            auth_code = st.text_input("Authorization code", placeholder="e.g. a1b2c3d4ef...")
+            if st.button("Complete Connection & Import Data"):
+                if not auth_code:
+                    st.error("Please paste the authorization code first.")
+                    return
+                api = StravaAPI()
+                handle_authorization(api, auth_code)
 
 
 def handle_refresh(database: DatabaseManager):
@@ -115,7 +160,6 @@ def handle_refresh(database: DatabaseManager):
                 st.rerun()
             else:
                 st.sidebar.info("Data is already up to date.")
-                # Still offer to clear cache if they suspect stale data
                 if st.sidebar.button("🧹 Clear App Cache"):
                     st.cache_data.clear()
                     st.rerun()
@@ -131,25 +175,36 @@ def handle_refresh(database: DatabaseManager):
 
 def main():
     """Main application entry point."""
-    # Check if database exists and has data
     database = DatabaseManager()
 
-    # Check for forced re-authorization
+    # ── Auto-detect OAuth redirect code from URL query params ──────
+    # Strava redirects back to this app with ?code=<auth_code>&scope=...
+    # when the redirect URI is set to http://localhost:8501.
     if st.session_state.get("force_reauth"):
         show_welcome_page()
         return
 
-    # Check if tables exist first
+    params = st.query_params
+    if "code" in params and not st.session_state.get("oauth_handled"):
+        auth_code = params["code"]
+        st.session_state["oauth_handled"] = True
+        # Clear the URL params so a refresh doesn't re-trigger the flow
+        st.query_params.clear()
+        api = StravaAPI()
+        handle_authorization(api, auth_code)
+        return
+
+    # ── Check if database has data ─────────────────────────────────
     try:
         activity_count = database.get_activity_count()
     except Exception:  # pylint: disable=broad-exception-caught
-        # Tables might not exist
         activity_count = 0
 
     if activity_count == 0:
         show_welcome_page()
         return
 
+    # ── Main dashboard ─────────────────────────────────────────────
     st.title("🏃 Strava Activity Analytics")
 
     dataframe = load_data()
@@ -158,18 +213,12 @@ def main():
     st.sidebar.title("Navigation")
     page_options = ["General Overview", "Activity Run Details", "Deep Dive", "AI Coach", "Races"]
 
-    # Handle navigation from other pages
     if "requested_page" in st.session_state:
         st.session_state["active_page"] = st.session_state.pop("requested_page")
 
-
-    # helper for radio button
-    # If active_page is not set, default to first option
     if "active_page" not in st.session_state:
         st.session_state.active_page = page_options[0]
 
-    # We use the key="active_page" to automatically sync with session_state
-    # No need to manually set index or update session_state manually unless forcing a change
     page = st.sidebar.radio("Go to", page_options, key="active_page")
 
     handle_refresh(database)
