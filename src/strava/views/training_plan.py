@@ -12,26 +12,11 @@ import google.genai.types as genai_types
 
 from strava.utils.ai_coach import AICoach
 from strava.db.db_manager import DatabaseManager
-
-
-# ── Color scheme for workout types ──────────────────────────────────
-
-WORKOUT_COLORS = {
-    "easy_run": "#4CAF50",
-    "recovery": "#66BB6A",
-    "tempo": "#FF9800",
-    "intervals": "#F44336",
-    "long_run": "#2196F3",
-    "rest": "#9E9E9E",
-    "cross_training": "#9C27B0",
-}
-
-STATUS_COLORS = {
-    "completed": "#4CAF50",
-    "missed": "#F44336",
-    "upcoming": "#2196F3",
-    "rest": "#9E9E9E",
-}
+from strava.constants import (
+    WORKOUT_COLORS,
+    WORKOUT_TYPE_COMPATIBLE,
+    COMPLETION_MIN_DISTANCE_RATIO,
+)
 
 
 def _get_workout_color(workout_type: str) -> str:
@@ -124,10 +109,19 @@ def _render_calendar(  # pylint: disable=too-many-locals,too-many-branches,too-m
         html += f'<div class="cal-header">{day_name}</div>'
 
     activity_emoji = {
-        "Run": "🏃", "Ride": "🚴", "Swim": "🏊", "Walk": "🚶",
-        "Hike": "🧗", "Workout": "💪", "WeightTraining": "💪",
-        "Yoga": "🧘", "Pilates": "🧘", "Crossfit": "💪",
-        "Rowing": "🚣", "Soccer": "⚽", "Tennis": "🎾",
+        "Run": "🏃",
+        "Ride": "🚴",
+        "Swim": "🏊",
+        "Walk": "🚶",
+        "Hike": "🧗",
+        "Workout": "💪",
+        "WeightTraining": "💪",
+        "Yoga": "🧘",
+        "Pilates": "🧘",
+        "Crossfit": "💪",
+        "Rowing": "🚣",
+        "Soccer": "⚽",
+        "Tennis": "🎾",
     }
     icon_map = {"completed": "✅", "missed": "❌", "upcoming": "📋", "rest": "😴"}
 
@@ -268,8 +262,7 @@ def _show_goal_input(database: DatabaseManager):  # pylint: disable=unused-argum
         "What is your running goal?",
         height=100,
         placeholder=(
-            "e.g. I want to run a sub-4 hour marathon in 3 months. "
-            "I train 4 times a week."
+            "e.g. I want to run a sub-4 hour marathon in 3 months. " "I train 4 times a week."
         ),
         key="goal_input",
     )
@@ -298,8 +291,7 @@ def _handle_accept(database: DatabaseManager):
     plan_json = st.session_state.draft_plan_json
     if not plan_json:
         st.error(
-            "Could not parse the plan structure. "
-            "Ask the coach to regenerate the JSON block."
+            "Could not parse the plan structure. " "Ask the coach to regenerate the JSON block."
         )
         return
 
@@ -334,7 +326,9 @@ def _handle_accept(database: DatabaseManager):
 def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
     """Show draft plan preview with chat and accept/regenerate buttons."""
     st.markdown("### 📋 Draft Training Plan")
-    st.caption("Review the plan below. Ask follow-up questions or request changes before accepting.")
+    st.caption(
+        "Review the plan below. Ask follow-up questions or request changes before accepting."
+    )
 
     plan_json = st.session_state.draft_plan_json
     if plan_json and "weeks" in plan_json:
@@ -405,8 +399,12 @@ def _show_draft_review(database: DatabaseManager, dataframe: pd.DataFrame):
                         if new_json:
                             st.session_state.draft_plan_text = reply
                             st.session_state.draft_plan_json = new_json
-                            for key in ("draft_cal_month", "draft_cal_year",
-                                        "cal_month", "cal_year"):
+                            for key in (
+                                "draft_cal_month",
+                                "draft_cal_year",
+                                "cal_month",
+                                "cal_year",
+                            ):
                                 st.session_state.pop(key, None)
                         st.rerun()
                     else:
@@ -541,16 +539,12 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame):
         wdf["week"] = wdf["workout_date"].dt.isocalendar().week
         for week_num, group in wdf.groupby("week"):
             total_dist = (
-                group["target_distance_km"].sum()
-                if "target_distance_km" in wdf.columns
-                else 0
+                group["target_distance_km"].sum() if "target_distance_km" in wdf.columns else 0
             )
             n_workouts = len(group[group["workout_type"] != "rest"])
             completed = group["completed"].sum() if "completed" in wdf.columns else 0
             dist_str = (
-                f"{total_dist:.1f}km planned, "
-                if pd.notnull(total_dist) and total_dist > 0
-                else ""
+                f"{total_dist:.1f}km planned, " if pd.notnull(total_dist) and total_dist > 0 else ""
             )
             st.markdown(
                 f"**Week {week_num}**: {n_workouts} workouts, "
@@ -578,7 +572,8 @@ def _tab_feedback(database: DatabaseManager, dataframe: pd.DataFrame):
         )
         today_str = datetime.date.today().isoformat()
         upcoming = [
-            w for w in plan["workouts"]
+            w
+            for w in plan["workouts"]
             if w["workout_date"] >= today_str and w["workout_type"] != "rest"
         ][:5]
         if upcoming:
@@ -616,10 +611,12 @@ def _tab_feedback(database: DatabaseManager, dataframe: pd.DataFrame):
     if "activity_date" in dataframe.columns:
         recent = dataframe.sort_values(by="activity_date", ascending=False).head(20)
         options = [
-            f"{row['activity_date'].strftime('%Y-%m-%d')} - "
-            f"{row.get('activity_name', 'Activity')} (ID: {row['activity_id']})"
-            if pd.notnull(row["activity_date"]) else
-            f"Unknown date - {row.get('activity_name', 'Activity')} (ID: {row['activity_id']})"
+            (
+                f"{row['activity_date'].strftime('%Y-%m-%d')} - "
+                f"{row.get('activity_name', 'Activity')} (ID: {row['activity_id']})"
+                if pd.notnull(row["activity_date"])
+                else f"Unknown date - {row.get('activity_name', 'Activity')} (ID: {row['activity_id']})"
+            )
             for _, row in recent.iterrows()
         ]
         selected_activity = st.selectbox("Choose Activity:", [""] + options)
@@ -627,10 +624,15 @@ def _tab_feedback(database: DatabaseManager, dataframe: pd.DataFrame):
             match = re.search(r"\(ID: (\d+)\)$", selected_activity)
             if match and st.button("Get Coaching Feedback", key="detailed_feedback_btn"):
                 st.session_state.pending_feedback_prompt = (
-                    f"Please give me detailed coaching feedback on this activity: "
+                    f"Please give me detailed coaching feedback on this specific activity: "
                     f"{selected_activity}. "
-                    "Use both get_km_splits and get_activity_details to give me specific "
-                    "per-km pace, HR, and zone data. Quote exact numbers from the tools."
+                    "Your feedback MUST NOT be static or generic. Analyze the exact numbers "
+                    "using get_km_splits and get_activity_details. "
+                    "If this was an easy run, did I actually stay in Zone 2? "
+                    "If it was a workout/interval session, did I hit the required paces and Zone 4/5? "
+                    "If it was a long run, was there aerobic decoupling (cardiac drift) later in the run? "
+                    "Provide a solid, unique critique based on the exact type of run and my execution of it. "
+                    "CRITICAL: Do NOT hallucinate data. Quote the exact numbers from the tools."
                 )
 
     st.divider()
@@ -681,10 +683,14 @@ def _tab_feedback(database: DatabaseManager, dataframe: pd.DataFrame):
                     st.rerun()
 
 
-def _sync_planned_workouts_with_activities(
-    database: DatabaseManager, df: pd.DataFrame
-):
-    """Auto-match activities in the dataframe to incomplete planned workouts."""
+def _sync_planned_workouts_with_activities(database: DatabaseManager, df: pd.DataFrame):
+    """Auto-match activities to incomplete planned workouts.
+
+    Matching rules (all must pass):
+    1. Same date as the planned workout.
+    2. Activity type is compatible with the planned workout type.
+    3. Actual distance >= planned distance * COMPLETION_MIN_DISTANCE_RATIO.
+    """
     plan = database.get_active_plan()
     if not plan or df.empty:
         return
@@ -693,30 +699,50 @@ def _sync_planned_workouts_with_activities(
     incomplete = [
         w
         for w in plan.get("workouts", [])
-        if w["workout_date"] <= today_str
-        and w["workout_type"] != "rest"
-        and not w.get("completed")
+        if w["workout_date"] <= today_str and w["workout_type"] != "rest" and not w.get("completed")
     ]
 
     for w in incomplete:
         if "activity_date" not in df.columns:
             break
-        day_activities = df[df["activity_date"].dt.strftime("%Y-%m-%d") == w["workout_date"]]
-        if not day_activities.empty:
-            best = day_activities.sort_values(by="distance", ascending=False).iloc[0]
-            database.update_workout_completion(
-                workout_id=w["workout_id"],
-                activity_id=int(best["activity_id"]),
-                feedback="Auto-matched via Strava sync",
-            )
+
+        day_activities = df[df["activity_date"].dt.strftime("%Y-%m-%d") == w["workout_date"]].copy()
+
+        if day_activities.empty:
+            continue
+
+        planned_type = w["workout_type"]
+        compatible_types = WORKOUT_TYPE_COMPATIBLE.get(planned_type, set())
+
+        # Filter by compatible activity type
+        type_match = day_activities[day_activities["activity_type"].isin(compatible_types)]
+
+        if type_match.empty:
+            # If no type match, skip — don't mark wrong workout types as done
+            continue
+
+        # Filter by minimum distance (skip if no distance planned)
+        planned_km = w.get("target_distance_km")
+        if planned_km and planned_km > 0:
+            min_dist_km = planned_km * COMPLETION_MIN_DISTANCE_RATIO
+            # df distance is in km (from the SQL view)
+            type_match = type_match[type_match["distance"] >= min_dist_km]
+
+        if type_match.empty:
+            continue
+
+        best = type_match.sort_values(by="distance", ascending=False).iloc[0]
+        database.update_workout_completion(
+            workout_id=w["workout_id"],
+            activity_id=int(best["activity_id"]),
+            feedback="Auto-matched: type-compatible activity on same date",
+        )
 
 
 # ── Main page ────────────────────────────────────────────────────────
 
 
-def page_ai_training_plan(
-    dataframe: pd.DataFrame, database: Optional[DatabaseManager] = None
-):
+def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseManager] = None):
     """AI Coach Training Plan page with 3 tabs."""
     st.header("🤖 AI Coach")
     st.markdown(
@@ -740,10 +766,11 @@ def page_ai_training_plan(
         if target in tab_names:
             st.session_state.main_nav_radio = target
 
+    # Target the specific radio group by identifying the main content area
     st.markdown(
         """
         <style>
-        div[role='radiogroup'] {
+        div[data-testid="stMainBlockContainer"] div[role='radiogroup'] {
             flex-direction: row;
             gap: 20px;
             padding: 10px 0 20px 0;

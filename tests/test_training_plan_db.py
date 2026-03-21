@@ -52,13 +52,15 @@ def test_create_training_plan_tables(temp_db_path):
 
 def test_insert_and_get_plan(db):
     """Insert a plan and verify retrieval."""
-    plan_id = db.insert_training_plan({
-        "goal": "Sub-4 marathon",
-        "start_date": "2026-03-01",
-        "end_date": "2026-05-01",
-        "status": "active",
-        "raw_llm_response": "Test plan text",
-    })
+    plan_id = db.insert_training_plan(
+        {
+            "goal": "Sub-4 marathon",
+            "start_date": "2026-03-01",
+            "end_date": "2026-05-01",
+            "status": "active",
+            "raw_llm_response": "Test plan text",
+        }
+    )
 
     assert plan_id is not None
     assert plan_id > 0
@@ -72,11 +74,13 @@ def test_insert_and_get_plan(db):
 
 def test_insert_planned_workouts(db):
     """Insert workouts and verify they are linked to the plan."""
-    plan_id = db.insert_training_plan({
-        "goal": "5K improvement",
-        "start_date": "2026-03-01",
-        "status": "active",
-    })
+    plan_id = db.insert_training_plan(
+        {
+            "goal": "5K improvement",
+            "start_date": "2026-03-01",
+            "status": "active",
+        }
+    )
 
     workouts = [
         {
@@ -124,31 +128,39 @@ def test_insert_planned_workouts(db):
 def test_get_planned_workouts_with_activity_join(db):
     """Test fetching planned workouts with matched activity data."""
     # Insert an activity first
-    db.insert_activity({
-        "activity_id": 99999,
-        "activity_name": "Morning Run",
-        "activity_type": "Run",
-        "distance": 6200.0,
-        "moving_time": 2100,
-        "activity_date": "2026-03-02T08:00:00Z",
-    })
+    db.insert_activity(
+        {
+            "activity_id": 99999,
+            "activity_name": "Morning Run",
+            "activity_type": "Run",
+            "distance": 6200.0,
+            "moving_time": 2100,
+            "activity_date": "2026-03-02T08:00:00Z",
+        }
+    )
 
-    plan_id = db.insert_training_plan({
-        "goal": "Test goal",
-        "start_date": "2026-03-02",
-        "status": "active",
-    })
+    plan_id = db.insert_training_plan(
+        {
+            "goal": "Test goal",
+            "start_date": "2026-03-02",
+            "status": "active",
+        }
+    )
 
-    db.insert_planned_workouts([{
-        "plan_id": plan_id,
-        "workout_date": "2026-03-02",
-        "workout_type": "easy_run",
-        "description": "Easy run",
-        "target_distance_km": 6.0,
-        "target_duration_min": 36,
-        "target_pace_min_km": 6.0,
-        "target_hr_zone": "Zone 2",
-    }])
+    db.insert_planned_workouts(
+        [
+            {
+                "plan_id": plan_id,
+                "workout_date": "2026-03-02",
+                "workout_type": "easy_run",
+                "description": "Easy run",
+                "target_distance_km": 6.0,
+                "target_duration_min": 36,
+                "target_pace_min_km": 6.0,
+                "target_hr_zone": "Zone 2",
+            }
+        ]
+    )
 
     workouts = db.get_planned_workouts(plan_id)
     assert len(workouts) == 1
@@ -158,38 +170,44 @@ def test_get_planned_workouts_with_activity_join(db):
 
 def test_update_workout_completion(db):
     """Mark a workout as done and verify matched activity + feedback."""
-    db.insert_activity({
-        "activity_id": 88888,
-        "activity_name": "Tempo Session",
-        "activity_type": "Run",
-        "distance": 8100.0,
-        "moving_time": 2400,
-        "activity_date": "2026-03-04T07:00:00Z",
-    })
+    db.insert_activity(
+        {
+            "activity_id": 88888,
+            "activity_name": "Tempo Session",
+            "activity_type": "Run",
+            "distance": 8100.0,
+            "moving_time": 2400,
+            "activity_date": "2026-03-04T07:00:00Z",
+        }
+    )
 
-    plan_id = db.insert_training_plan({
-        "goal": "Test",
-        "start_date": "2026-03-04",
-        "status": "active",
-    })
+    plan_id = db.insert_training_plan(
+        {
+            "goal": "Test",
+            "start_date": "2026-03-04",
+            "status": "active",
+        }
+    )
 
-    db.insert_planned_workouts([{
-        "plan_id": plan_id,
-        "workout_date": "2026-03-04",
-        "workout_type": "tempo",
-        "description": "Tempo run",
-        "target_distance_km": 8.0,
-        "target_duration_min": 40,
-        "target_pace_min_km": 5.0,
-        "target_hr_zone": "Zone 3",
-    }])
+    db.insert_planned_workouts(
+        [
+            {
+                "plan_id": plan_id,
+                "workout_date": "2026-03-04",
+                "workout_type": "tempo",
+                "description": "Tempo run",
+                "target_distance_km": 8.0,
+                "target_duration_min": 40,
+                "target_pace_min_km": 5.0,
+                "target_hr_zone": "Zone 3",
+            }
+        ]
+    )
 
     plan = db.get_active_plan()
     workout_id = plan["workouts"][0]["workout_id"]
 
-    db.update_workout_completion(
-        workout_id, activity_id=88888, feedback="Great tempo session!"
-    )
+    db.update_workout_completion(workout_id, activity_id=88888, feedback="Great tempo session!")
 
     updated_plan = db.get_active_plan()
     w = updated_plan["workouts"][0]
@@ -200,16 +218,20 @@ def test_update_workout_completion(db):
 
 def test_get_active_plan_returns_only_active(db):
     """Verify only the active plan is returned."""
-    db.insert_training_plan({
-        "goal": "Old plan",
-        "start_date": "2026-01-01",
-        "status": "archived",
-    })
-    db.insert_training_plan({
-        "goal": "Current plan",
-        "start_date": "2026-03-01",
-        "status": "active",
-    })
+    db.insert_training_plan(
+        {
+            "goal": "Old plan",
+            "start_date": "2026-01-01",
+            "status": "archived",
+        }
+    )
+    db.insert_training_plan(
+        {
+            "goal": "Current plan",
+            "start_date": "2026-03-01",
+            "status": "active",
+        }
+    )
 
     plan = db.get_active_plan()
     assert plan is not None
@@ -218,11 +240,13 @@ def test_get_active_plan_returns_only_active(db):
 
 def test_archive_plan(db):
     """Verify archiving a plan removes it from active results."""
-    plan_id = db.insert_training_plan({
-        "goal": "To be archived",
-        "start_date": "2026-03-01",
-        "status": "active",
-    })
+    plan_id = db.insert_training_plan(
+        {
+            "goal": "To be archived",
+            "start_date": "2026-03-01",
+            "status": "active",
+        }
+    )
 
     plan = db.get_active_plan()
     assert plan is not None

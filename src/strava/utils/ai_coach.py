@@ -17,6 +17,7 @@ from strava.db.db_manager import DatabaseManager
 
 # ── Shared formatting helpers ──────────────────────────────────────────
 
+
 def _fmt_pace(pace_dec_min_per_km: float) -> str:
     """Format a decimal pace (min/km) as MM:SS/km."""
     mins = int(pace_dec_min_per_km)
@@ -58,7 +59,7 @@ COACH_TOOLS = [
                 description=(
                     "Query the athlete's recent activities from the database. "
                     "Returns a summary of each activity including date, type, "
-                    "distance, pace, heart rate, and elevation. "
+                    "distance, pace, heart rate, suffer_score (training load), and elevation. "
                     "NOTE: distance is in metres, pace is derived from moving_time."
                 ),
                 parameters={
@@ -74,8 +75,8 @@ COACH_TOOLS = [
             types.FunctionDeclaration(
                 name="get_weekly_summary",
                 description=(
-                    "Get weekly mileage, total time, and average pace aggregates "
-                    "for the last N weeks."
+                    "Get weekly mileage, total time, total suffer_score (training load), "
+                    "and average pace aggregates for the last N weeks."
                 ),
                 parameters={
                     "type": "OBJECT",
@@ -177,6 +178,26 @@ COACH_TOOLS = [
                     "required": ["activity_id"],
                 },
             ),
+            types.FunctionDeclaration(
+                name="get_training_load_trend",
+                description=(
+                    "Compute a rolling training load trend using suffer_score / relative_effort "
+                    "from the database. Returns 7-day and 28-day cumulative loads and their "
+                    "ratio (acute:chronic) to assess fatigue vs fitness balance. "
+                    "ALWAYS call this before generating a new plan."
+                ),
+                parameters={"type": "OBJECT", "properties": {}},
+            ),
+            types.FunctionDeclaration(
+                name="get_plan_history",
+                description=(
+                    "Retrieve all past training plans (active and archived). "
+                    "Use this to avoid repeating a previous plan and to understand "
+                    "the athlete's long-term training history. "
+                    "ALWAYS call this before generating a new plan."
+                ),
+                parameters={"type": "OBJECT", "properties": {}},
+            ),
         ]
     )
 ]
@@ -211,9 +232,7 @@ class AICoach:
     def activities_df(self) -> pd.DataFrame:
         """Lazy-load activities dataframe (distance in raw metres from DB)."""
         if self._activities_df is None:
-            rows = self.db.execute_query(
-                "SELECT * FROM activities ORDER BY activity_date DESC"
-            )
+            rows = self.db.execute_query("SELECT * FROM activities ORDER BY activity_date DESC")
             self._activities_df = pd.DataFrame([dict(r) for r in rows])
             if "activity_date" in self._activities_df.columns:
                 self._activities_df["activity_date"] = pd.to_datetime(
@@ -223,13 +242,21 @@ class AICoach:
 
     @property
     def _coach_system_instruction(self) -> str:
-        """Global system instruction to prevent annoying Gemini disclaimers."""
+        """System instruction focused on data-driven coaching and anti-hallucination."""
         return (
-            "You are the user's personal AI running coach. "
-            "You are authorized to give specific training, pacing, and recovery advice. "
-            "Give direct, objective, expert coaching advice. "
-            "Only include disclaimers about not being a qualified coach or medical "
-            "professional when strictly necessary."
+            "You are the athlete's personal AI running coach with access to their "
+            "real training database via tools. "
+            "CRITICAL RULES:\n"
+            "1. Only state facts derived directly from tool results. "
+            "Do NOT invent paces, distances, heart rates, or dates you have not seen in data.\n"
+            "2. Always call get_recent_activities and get_weekly_summary before giving advice.\n"
+            "3. Always call get_plan_history before generating a new plan to avoid repeating "
+            "previous plans and to understand the athlete's long-term trajectory.\n"
+            "4. Always call get_training_load_trend to assess fatigue before prescribing load.\n"
+            "5. Give direct, objective, expert coaching advice. "
+            "Push back firmly on unreasonable requests (too-fast progression, "
+            "skipping rest, unrealistic race goals for current fitness).\n"
+            "6. Only add disclaimers about medical advice when strictly necessary."
         )
 
     # ── Private helpers ─────────────────────────────────────────────
@@ -265,15 +292,10 @@ class AICoach:
             "Z4 (Threshold)": ((hr > z3) & (hr <= z4)).sum(),
             "Z5 (Red Line)": (hr > z4).sum(),
         }
-        return " | ".join(
-            f"{zone}: {count / total * 100:.1f}%"
-            for zone, count in counts.items()
-        )
+        return " | ".join(f"{zone}: {count / total * 100:.1f}%" for zone, count in counts.items())
 
     @staticmethod
-    def _km_bucket_stats(
-        rows: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def _km_bucket_stats(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Split stream rows into 1-km buckets and compute per-km stats.
 
@@ -300,16 +322,10 @@ class AICoach:
 
             pace = _pace_from_time_dist(seg_time_s, seg_dist_m)
 
-            hr_vals = [
-                r["heart_rate"] for r in seg
-                if r.get("heart_rate") and r["heart_rate"] > 0
-            ]
+            hr_vals = [r["heart_rate"] for r in seg if r.get("heart_rate") and r["heart_rate"] > 0]
             avg_hr = sum(hr_vals) / len(hr_vals) if hr_vals else None
 
-            cad_vals = [
-                r["cadence"] for r in seg
-                if r.get("cadence") and r["cadence"] > 0
-            ]
+            cad_vals = [r["cadence"] for r in seg if r.get("cadence") and r["cadence"] > 0]
             avg_cadence = sum(cad_vals) / len(cad_vals) if cad_vals else None
 
             alt_col = "enhanced_altitude" if seg[0].get("enhanced_altitude") else "altitude"
@@ -356,9 +372,7 @@ class AICoach:
                 else "N/A"
             )
             duration = (
-                _fmt_duration(row["moving_time"])
-                if pd.notnull(row.get("moving_time"))
-                else "N/A"
+                _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
             )
             hr = (
                 f"{int(row['average_heart_rate'])}bpm"
@@ -367,14 +381,15 @@ class AICoach:
             )
             is_indoor = " [INDOOR]" if row.get("trainer") else ""
             elev = (
-                f"| Elev: {row['elevation_gain']}m"
-                if pd.notnull(row.get("elevation_gain"))
-                else ""
+                f"| Elev: {row['elevation_gain']}m" if pd.notnull(row.get("elevation_gain")) else ""
+            )
+            score = (
+                f"| Load: {int(row['suffer_score'])}" if pd.notnull(row.get("suffer_score")) else ""
             )
             lines.append(
                 f"- ID:{row.get('activity_id', 'N/A')} | {date_str}: "
                 f"{row.get('activity_type', 'Run')} '{row.get('activity_name', '')}'"
-                f"{is_indoor} | {dist} | {pace} | {duration} {hr} {elev}"
+                f"{is_indoor} | {dist} | {pace} | {duration} {hr} {score} {elev}"
             )
         return "\n".join(lines)
 
@@ -406,8 +421,14 @@ class AICoach:
         decoupling = "N/A"
 
         def _efficiency(chunk: pd.DataFrame) -> Optional[float]:
-            valid_hr = chunk[chunk["heart_rate"] > 0]["heart_rate"] if "heart_rate" in chunk else pd.Series(dtype=float)
-            valid_sp = chunk[chunk["speed"] > 0]["speed"] if "speed" in chunk else pd.Series(dtype=float)
+            valid_hr = (
+                chunk[chunk["heart_rate"] > 0]["heart_rate"]
+                if "heart_rate" in chunk
+                else pd.Series(dtype=float)
+            )
+            valid_sp = (
+                chunk[chunk["speed"] > 0]["speed"] if "speed" in chunk else pd.Series(dtype=float)
+            )
             if valid_hr.empty or valid_sp.empty:
                 return None
             return float(valid_sp.mean() / valid_hr.mean())
@@ -418,30 +439,39 @@ class AICoach:
             drop = (eff1 - eff2) / eff1 * 100
             decoupling = f"{drop:.1f}% (positive = efficiency dropped)"
 
-        elev = (
-            f"{row.get('elevation_gain')}m"
-            if pd.notnull(row.get("elevation_gain"))
-            else "N/A"
-        )
+        elev = f"{row.get('elevation_gain')}m" if pd.notnull(row.get("elevation_gain")) else "N/A"
         dist_m = row.get("distance")
-        duration = _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
+        duration = (
+            _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
+        )
         overall_pace = (
             _pace_from_time_dist(row["moving_time"], dist_m)
             if pd.notnull(row.get("moving_time")) and pd.notnull(dist_m) and dist_m > 0
             else "N/A"
         )
 
-        return "\n".join([
-            f"Details for Activity {activity_id} ({row.get('activity_name', 'Run')}):",
-            f"  Distance: {dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "  Distance: N/A",
-            f"  Duration (moving): {duration}",
-            f"  Overall Pace: {overall_pace}",
-            f"  Indoor: {'Yes' if row.get('trainer') else 'No'}",
-            f"  Elevation Gain: {elev}",
-            f"  Avg HR: {int(row['average_heart_rate'])}bpm" if pd.notnull(row.get("average_heart_rate")) else "  Avg HR: N/A",
-            f"  Intensity (Time in Zones): {hr_analysis}",
-            f"  Aerobic Decoupling (Cardiac Drift): {decoupling}",
-        ])
+        return "\n".join(
+            [
+                f"Details for Activity {activity_id} ({row.get('activity_name', 'Run')}):",
+                f"  Distance: {dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "  Distance: N/A",
+                f"  Duration (moving): {duration}",
+                f"  Overall Pace: {overall_pace}",
+                f"  Indoor: {'Yes' if row.get('trainer') else 'No'}",
+                f"  Elevation Gain: {elev}",
+                (
+                    f"  Avg HR: {int(row['average_heart_rate'])}bpm"
+                    if pd.notnull(row.get("average_heart_rate"))
+                    else "  Avg HR: N/A"
+                ),
+                f"  Intensity (Time in Zones): {hr_analysis}",
+                f"  Aerobic Decoupling (Cardiac Drift): {decoupling}",
+                (
+                    f"  Relative Score (Suffer Score): {int(row['suffer_score'])}"
+                    if pd.notnull(row.get("suffer_score"))
+                    else "  Relative Score: N/A"
+                ),
+            ]
+        )
 
     def _tool_deduce_performance_zones(self) -> str:
         """Analyze best races to suggest Threshold HR."""
@@ -482,17 +512,14 @@ class AICoach:
         dist_m = row.get("distance") or total_m
         moving_time = row.get("moving_time")
         overall_pace = (
-            _pace_from_time_dist(moving_time, dist_m)
-            if moving_time and dist_m
-            else "N/A"
+            _pace_from_time_dist(moving_time, dist_m) if moving_time and dist_m else "N/A"
         )
         duration = _fmt_duration(moving_time) if moving_time else "N/A"
 
         splits = self._km_bucket_stats(sdf.to_dict("records"))
 
         lines = [
-            f"Km-by-km splits for Activity {activity_id} "
-            f"({row.get('activity_name', 'Run')}):",
+            f"Km-by-km splits for Activity {activity_id} " f"({row.get('activity_name', 'Run')}):",
             f"  Total: {dist_m / 1000:.2f}km | Moving time: {duration} | Overall pace: {overall_pace}",
             "",
         ]
@@ -502,20 +529,14 @@ class AICoach:
                 label += f" (partial {split['dist_m']:.0f}m)"
 
             hr_str = f"{split['avg_hr']:.0f}bpm" if split["avg_hr"] else "N/A"
-            cad_str = (
-                f" | Cadence: {split['avg_cadence']:.0f}spm"
-                if split["avg_cadence"]
-                else ""
-            )
+            cad_str = f" | Cadence: {split['avg_cadence']:.0f}spm" if split["avg_cadence"] else ""
             if split["elev_delta"] is not None:
                 sign = "+" if split["elev_delta"] >= 0 else ""
                 elev_str = f" | Elev: {sign}{split['elev_delta']:.0f}m"
             else:
                 elev_str = ""
 
-            lines.append(
-                f"  {label}: {split['pace']} | HR: {hr_str}{cad_str}{elev_str}"
-            )
+            lines.append(f"  {label}: {split['pace']} | HR: {hr_str}{cad_str}{elev_str}")
         return "\n".join(lines)
 
     def _tool_get_weekly_summary(self, weeks: int = 4) -> str:
@@ -540,9 +561,11 @@ class AICoach:
             n_runs = len(group)
             avg_hr = group["average_heart_rate"].mean()
             hr_str = f"{avg_hr:.0f}bpm" if pd.notnull(avg_hr) else "N/A"
+            total_load = group["suffer_score"].sum()
             lines.append(
                 f"- W{week}/{year}: {n_runs} runs, "
-                f"{total_dist_km:.1f}km, {_fmt_duration(total_time_s)}, avg HR {hr_str}"
+                f"{total_dist_km:.1f}km, {_fmt_duration(total_time_s)}, "
+                f"Load: {total_load:.0f}, avg HR {hr_str}"
             )
         return "\n".join(lines)
 
@@ -566,13 +589,9 @@ class AICoach:
             dist_m = row.get("distance")
             dist = f"{dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "N/A"
             time_str = (
-                _fmt_duration(row["elapsed_time"])
-                if pd.notnull(row.get("elapsed_time"))
-                else "N/A"
+                _fmt_duration(row["elapsed_time"]) if pd.notnull(row.get("elapsed_time")) else "N/A"
             )
-            lines.append(
-                f"- {date_str}: {row.get('activity_name', 'Race')} | {dist} | {time_str}"
-            )
+            lines.append(f"- {date_str}: {row.get('activity_name', 'Race')} | {dist} | {time_str}")
         return "\n".join(lines)
 
     def _tool_get_current_plan(self) -> str:
@@ -638,6 +657,77 @@ class AICoach:
             lines.append(f"Extra (unplanned) activities: {extra}")
         return "\n".join(lines)
 
+    def _tool_get_training_load_trend(self) -> str:
+        """Compute acute (7-day) and chronic (28-day) training load from suffer_score."""
+        df = self.activities_df
+        if df.empty:
+            return "No activities available for load trend."
+
+        now = pd.Timestamp.now(tz="UTC")
+        w7 = now - pd.Timedelta(days=7)
+        w28 = now - pd.Timedelta(days=28)
+
+        score_col = None
+        for candidate in ("suffer_score", "relative_effort"):
+            if candidate in df.columns and df[candidate].notna().any():
+                score_col = candidate
+                break
+
+        if score_col is None:
+            # fallback: estimate from moving_time * avg_hr proxy
+            if "moving_time" in df.columns and "average_heart_rate" in df.columns:
+                df = df.copy()
+                df["_effort"] = (
+                    df["moving_time"].fillna(0) / 60 * df["average_heart_rate"].fillna(0) / 100
+                )
+                score_col = "_effort"
+            else:
+                return "No suffer_score or HR data available for load trend."
+
+        acute = df[df["activity_date"] >= w7][score_col].sum()
+        chronic = df[df["activity_date"] >= w28][score_col].mean() * 7  # weekly avg
+        ratio = acute / chronic if chronic > 0 else None
+
+        assessment = ""
+        if ratio is not None:
+            if ratio < 0.8:
+                assessment = "Low load — athlete may be undertraining or tapering."
+            elif ratio <= 1.3:
+                assessment = "Optimal load — good balance of stress and recovery."
+            else:
+                assessment = (
+                    "HIGH load — acute stress significantly exceeds chronic base. "
+                    "Risk of overtraining. Recommend recovery week."
+                )
+
+        return "\n".join(
+            [
+                f"Training Load Trend (based on {score_col}):",
+                f"  7-day acute load: {acute:.0f}",
+                f"  28-day chronic load (weekly avg): {chronic:.0f}",
+                f"  Acute:Chronic ratio: {ratio:.2f}" if ratio else "  Ratio: N/A",
+                f"  Assessment: {assessment}" if assessment else "",
+            ]
+        )
+
+    def _tool_get_plan_history(self) -> str:
+        """Return a summary of all past training plans."""
+        plans = self.db.get_plan_history()
+        if not plans:
+            return "No training plan history found. This will be the athlete's first plan."
+
+        lines = [f"Training plan history ({len(plans)} plan(s)):\n"]
+        for p in plans:
+            adherence = ""
+            if p.get("workout_count") and p["workout_count"] > 0:
+                pct = int(p["completed_count"] / p["workout_count"] * 100)
+                adherence = f" | Adherence: {pct}% ({p['completed_count']}/{p['workout_count']})"
+            lines.append(
+                f"- [{p['status'].upper()}] {p['start_date']} → {p.get('end_date', 'N/A')}: "
+                f"{p['goal']}{adherence}"
+            )
+        return "\n".join(lines)
+
     def _dispatch_tool_call(self, function_call) -> str:
         """Execute a tool function call from Gemini and return the result."""
         name = function_call.name
@@ -653,6 +743,8 @@ class AICoach:
             "get_activity_details": self._tool_get_activity_details,
             "deduce_performance_zones": self._tool_deduce_performance_zones,
             "get_km_splits": self._tool_get_km_splits,
+            "get_training_load_trend": self._tool_get_training_load_trend,
+            "get_plan_history": self._tool_get_plan_history,
         }
 
         handler = dispatch.get(name)
@@ -682,19 +774,31 @@ class AICoach:
         system_prompt = f"""You are an expert running coach. Today is {current_date}.
 
 Your Mission:
-- Use the available tools to analyze the athlete's data BEFORE generating a plan.
-- Call get_recent_activities and get_weekly_summary to understand their current fitness.
-- Call get_race_history to understand their race performance.
-- Use is_indoor_activity if you suspect activity data might be inaccurate or missing GPS.
-- Use get_activity_details and get_km_splits to analyse specific sessions for easy-run discipline and elevation.
-- Create a personalized, realistic training plan.
-- BE COMPLETELY OBJECTIVE. DO NOT be a "yes-man".
-- If the athlete requests an unreasonable goal, ramps up mileage too fast, or wants to skip rest, push back firmly.
+- STEP 1: Call get_plan_history to understand what plans have been created before.
+- STEP 2: Call get_training_load_trend to assess the athlete's current fatigue level.
+- STEP 3: Call get_recent_activities and get_weekly_summary to understand current fitness.
+- STEP 4: Call get_race_history to understand race performance.
+- STEP 5 (optional): Use get_activity_details and get_km_splits to analyse key sessions.
+- STEP 6: Create a personalized, realistic training plan based on ALL of the above.
+
+PLAN DURATION:
+- Default to an **8-week (2-month) plan** unless the athlete specifies otherwise,
+  a race within 3 weeks makes a short block necessary, or the goal is clearly short-term.
+- Plans shorter than 4 weeks must be explicitly justified.
+- Plans longer than 8 weeks are fine if the athlete requests or if a goal race is far away.
+
+ANTI-HALLUCINATION RULES:
+- Only state paces, distances, and heart rates derived from actual tool data.
+- If a tool returns no data, say so clearly rather than inventing values.
+- Never fabricate race times, PRs, or training history.
 
 PRO COACHING GUIDELINES:
-1. Easy Run Discipline: Monitor HR on easy/recovery runs using get_activity_details.
-2. Aerobic Decoupling: Flag it if HR rises for the same pace in the second half.
-3. Race Deduction: Validate intensity zones from race data.
+1. Easy Run Discipline: 80% of runs should be Zone 2. Check using get_activity_details.
+2. Aerobic Decoupling: Flag HR drift in second half of long runs.
+3. Load Management: Use get_training_load_trend — if acute:chronic > 1.3, start with a "
+   "recovery week before building.
+4. Plan History: If previous plans exist from get_plan_history, build on them — do not "
+   "repeat the same structure unless it clearly worked (high adherence).
 
 The athlete's goal: {user_goal}
 
@@ -718,10 +822,7 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
             return None, f"Error generating plan: {exc}"
 
     def adapt_plan(self, user_request: str) -> Tuple[Optional[object], str]:
-        """Adapt the existing training plan based on user request.
-
-        Returns (chat_session, plan_text).
-        """
+        """Adapt the existing training plan based on user request."""
         current_date = datetime.date.today().strftime("%Y-%m-%d")
         plan = self.db.get_active_plan()
         if not plan:
@@ -732,11 +833,17 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
         system_prompt = f"""You are an expert running coach. Today is {current_date}.
 
 Your Mission:
-- The athlete already has an active training plan.
+- STEP 1: Call get_plan_history to understand the full history of the athlete's plans.
+- STEP 2: Call get_training_load_trend to check current fatigue before prescribing new load.
+- STEP 3: The athlete already has an active training plan (shown below).
 - You MUST keep past workouts unchanged. Do not alter already-completed sessions.
 - They want to change their plan: "{user_request}"
-- Use compare_plan_vs_actual and get_recent_activities if needed.
+- Use compare_plan_vs_actual and get_recent_activities as needed.
 - BE COMPLETELY OBJECTIVE. Push back on unreasonable adaptations.
+
+ANTI-HALLUCINATION RULES:
+- Only state paces, distances, and heart rates derived from actual tool data or the current plan.
+- Never invent training history.
 
 Here is their EXACT current plan JSON:
 ```json
@@ -773,10 +880,16 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
         """Autonomously analyze plan adherence for the current week."""
         chat = self._make_chat()
         prompt = (
-            "You are an expert running coach reviewing plan adherence. "
-            "Use tools to: 1. get_current_plan, 2. compare_plan_vs_actual(week_offset=0), "
-            "3. get_recent_activities(days=7). "
-            "Provide concise feedback, zone check, and next steps."
+            "You are an expert running coach reviewing the athlete's plan adherence for this week. "
+            "Your feedback MUST NOT be generic. It must be highly specific to the *types* of runs planned vs executed.\n\n"
+            "STEP 1: Call get_current_plan, compare_plan_vs_actual(week_offset=0), and get_recent_activities(days=7).\n"
+            "STEP 2: For each completed run, analyze the execution. Did they hit the intended HR zone? "
+            "For easy runs, was the HR low enough (Zone 2)? For intervals/tempo, did they hit Zone 4/5? "
+            "Was the distance correct?\n"
+            "STEP 3: Provide a compelling, objective coaching analysis. Point out specific wins (e.g., 'Great discipline keeping your HR in Zone 2 on Tuesday's 8km') "
+            "and specific areas for improvement (e.g., 'You ran Wednesday's intervals too slow, barely hitting Zone 3').\n"
+            "STEP 4: State clear next steps for the upcoming week based on this week's fatigue and execution.\n\n"
+            "CRITICAL: Do NOT hallucinate data. Only cite paces, HRs, and distances returned by your tools."
         )
         try:
             response = chat.send_message(prompt)
@@ -813,9 +926,7 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
                 )
                 for part in function_calls
             ]
-            response = chat_session.send_message(
-                types.Content(parts=tool_responses)
-            )
+            response = chat_session.send_message(types.Content(parts=tool_responses))
 
         # Fallback if max iterations reached
         if (
