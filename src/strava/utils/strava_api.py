@@ -29,11 +29,12 @@ class StravaAPI:
         self.refresh_token = os.getenv("STRAVA_REFRESH_TOKEN")
 
         self.access_token = access_token or os.getenv("STRAVA_ACCESS_TOKEN")
-        if not self.access_token:
-            raise ValueError("Strava access token is required")
+        # Removing strict requirement for access token at initialization
+        # as it may be needed to generate authorization URL before tokens are acquired.
 
         self.session = requests.Session()
-        self._update_session_header()
+        if self.access_token:
+            self._update_session_header()
 
     def _update_session_header(self):
         """Update the session header with the current access token."""
@@ -68,16 +69,19 @@ class StravaAPI:
         if not self.client_id:
             raise ValueError("STRAVA_CLIENT_ID is not set")
 
+        # Allow override via env var so users can point back to the Streamlit port
+        redirect_uri = os.getenv("STRAVA_REDIRECT_URI", "http://localhost:8501")
+
         base_url = "https://www.strava.com/oauth/authorize"
         params = {
             "client_id": self.client_id,
-            "redirect_uri": "http://localhost",  # Default redirect URI
+            "redirect_uri": redirect_uri,
             "response_type": "code",
             "approval_prompt": "force",
             "scope": "read,activity:read,activity:read_all",
         }
 
-        from urllib.parse import urlencode
+        from urllib.parse import urlencode  # pylint: disable=import-outside-toplevel
 
         return f"{base_url}?{urlencode(params)}"
 
@@ -137,25 +141,41 @@ class StravaAPI:
             f.writelines(new_lines)
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
-        """Make an authenticated request with automatic token refresh."""
-        response = self.session.request(method, url, **kwargs)
+        """Make an authenticated request with automatic token refresh and rate limit retry."""
+        import time
 
-        if response.status_code == 401:
-            # Check if it's a scope issue vs expired token
-            try:
-                error_data = response.json()
-                if any(err.get("code") == "missing" for err in error_data.get("errors", [])):
-                    # This is a scope issue, refreshing won't help if the grant is limited
-                    return response
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
+        max_retries = 3
+        base_delay = 5
 
-            try:
-                self._refresh_access_token()
-                # Retry once
-                response = self.session.request(method, url, **kwargs)
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                print(f"Token refresh failed: {exc}")
+        for attempt in range(max_retries):
+            response = self.session.request(method, url, **kwargs)
+
+            if response.status_code == 401:
+                # Check if it's a scope issue vs expired token
+                try:
+                    error_data = response.json()
+                    if any(err.get("code") == "missing" for err in error_data.get("errors", [])):
+                        # This is a scope issue, refreshing won't help if the grant is limited
+                        return response
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+
+                try:
+                    self._refresh_access_token()
+                    # Retry once after refresh
+                    response = self.session.request(method, url, **kwargs)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    print(f"Token refresh failed: {exc}")
+
+            if response.status_code == 429 and attempt < max_retries - 1:
+                print(
+                    f"API Rate Limit 429. Retrying in {base_delay}s (Attempt {attempt+1}/{max_retries})..."
+                )
+                time.sleep(base_delay)
+                base_delay *= 2  # Exponential backoff
+                continue
+
+            return response
 
         return response
 
@@ -245,3 +265,21 @@ class StravaAPI:
             all_activities.extend(activities)
             page += 1
         return all_activities
+
+    def get_activity_detail(self, activity_id: int) -> Dict[str, Any]:
+        """Fetch the full detailed activity object for a single activity.
+
+        This endpoint returns additional fields not available in the summary
+        list, including ``perceived_exertion``.
+
+        Args:
+            activity_id: The Strava activity ID.
+
+        Returns:
+            Detail activity dict (may be empty on error).
+        """
+        response = self._request("GET", f"{self.BASE_URL}/activities/{activity_id}")
+        if response.status_code == 404:
+            return {}
+        response.raise_for_status()
+        return response.json()

@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
+from strava.constants import ZONE_COLORS, ZONE_ORDER
+
 
 def _filter_by_date(df):
     st.sidebar.markdown("### General Options")
@@ -127,7 +129,13 @@ def _plot_distribution(filtered_df, zones):
 
             zone_df["HR Zone"] = zone_df["average_heart_rate"].apply(get_zone)
 
-            zone_colors = {"Z1": "gray", "Z2": "blue", "Z3": "green", "Z4": "orange", "Z5": "red"}
+            zone_colors_map = {
+                "Z1": ZONE_COLORS["Z1"],
+                "Z2": ZONE_COLORS["Z2"],
+                "Z3": ZONE_COLORS["Z3"],
+                "Z4": ZONE_COLORS["Z4"],
+                "Z5": ZONE_COLORS["Z5"],
+            }
 
             zone_stats = zone_df.groupby("HR Zone")["moving_time"].sum().reset_index()
             zone_stats["Minutes"] = zone_stats["moving_time"] / 60
@@ -139,14 +147,58 @@ def _plot_distribution(filtered_df, zones):
                     names="HR Zone",
                     title="Time in Zones (by Avg HR)",
                     color="HR Zone",
-                    color_discrete_map=zone_colors,
-                    category_orders={"HR Zone": ["Z1", "Z2", "Z3", "Z4", "Z5"]},
+                    color_discrete_map=zone_colors_map,
+                    category_orders={"HR Zone": ZONE_ORDER},
                 )
                 st.plotly_chart(fig_zone)
             else:
                 st.info("No HR data")
         else:
             st.info("No HR data")
+
+
+def _plot_relative_score(filtered_df):
+    st.subheader("Relative Score Trend")
+    if filtered_df.empty or "suffer_score" not in filtered_df.columns:
+        return
+
+    plot_df = filtered_df.dropna(subset=["suffer_score"]).copy()
+    if plot_df.empty:
+        st.info("No relative score data available.")
+        return
+
+    # Aggregate by week
+    plot_df["Week"] = (
+        plot_df["activity_date"]
+        .dt.tz_localize(None)
+        .dt.to_period("W-SUN")
+        .apply(lambda r: r.start_time)
+    )
+
+    weekly_score = plot_df.groupby("Week")["suffer_score"].sum().reset_index()
+
+    # Fill missing weeks with 0
+    if not weekly_score.empty:
+        min_week = weekly_score["Week"].min()
+        max_week = weekly_score["Week"].max()
+        all_weeks = pd.date_range(start=min_week, end=max_week, freq="W-MON")
+        complete_weeks_df = pd.DataFrame({"Week": all_weeks})
+        weekly_score = complete_weeks_df.merge(weekly_score, on="Week", how="left")
+        weekly_score["suffer_score"] = weekly_score["suffer_score"].fillna(0)
+
+    # Convert Week to string for consistent x-axis labeling
+    weekly_score["Week"] = weekly_score["Week"].dt.strftime("%Y-%m-%d")
+
+    fig = px.bar(
+        weekly_score,
+        x="Week",
+        y="suffer_score",
+        title="Weekly Total Relative Score (Training Load)",
+        labels={"Week": "Week Starting", "suffer_score": "Total Relative Score"},
+        text="suffer_score",
+    )
+    fig.update_layout(xaxis={"type": "category"})
+    st.plotly_chart(fig)
 
 
 def _display_recent_activities(filtered_df):
@@ -171,6 +223,7 @@ def _display_recent_activities(filtered_df):
         "activity_type": "Type",
         "distance": "Distance (km)",
         "average_heart_rate": "Avg HR",
+        "suffer_score": "Score",
     }
 
     # logic to robustly pick cols
@@ -187,11 +240,13 @@ def _display_recent_activities(filtered_df):
     available_cols_derived.append("Duration")
     if "average_heart_rate" in display_df.columns:
         available_cols.append("average_heart_rate")
+    if "suffer_score" in display_df.columns:
+        available_cols.append("suffer_score")
 
     final_df = display_df[available_cols + available_cols_derived].copy()
     final_df = final_df.rename(columns=cols_map)
 
-    desired_order = ["Name", "Type", "Date", "Distance (km)", "Duration", "Avg HR"]
+    desired_order = ["Name", "Type", "Date", "Distance (km)", "Duration", "Avg HR", "Score"]
     final_cols = [c for c in desired_order if c in final_df.columns]
     final_df = final_df[final_cols]
 
@@ -206,4 +261,5 @@ def page_general(df, zones):
     _display_metrics(filtered_df)
     _plot_weekly_duration(filtered_df)
     _plot_distribution(filtered_df, zones)
+    _plot_relative_score(filtered_df)
     _display_recent_activities(filtered_df)

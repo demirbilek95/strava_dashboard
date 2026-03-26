@@ -25,6 +25,7 @@ SELECT
     average_watts,
     weighted_average_power,
     calories,
+    suffer_score,
     relative_effort,
     total_work,
     max_temperature,

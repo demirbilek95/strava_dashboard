@@ -25,6 +25,9 @@ class DatabaseManager:
 
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure schema is up to date
+        if self.db_path.exists():
+            self._migrate_schema()
 
     @contextmanager
     def get_connection(self):
@@ -71,7 +74,42 @@ class DatabaseManager:
         with self.get_connection() as conn:
             conn.executescript(schema_sql)
 
-        print(f"✓ Database tables created at {self.db_path}")
+        # Removed redundant print statement
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """Apply migrations to existing tables."""
+        try:
+            # Check if activities table exists before migrating
+            table_check = self.execute_query(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='activities'"
+            )
+            if not table_check:
+                return
+
+            columns = self.execute_query("PRAGMA table_info(activities)")
+            column_names = [col["name"] for col in columns]
+
+            new_columns = [
+                ("workout_type", "INTEGER"),
+                ("trainer", "BOOLEAN DEFAULT 0"),
+                ("suffer_score", "INTEGER"),
+                ("sport_type", "TEXT"),
+                ("pr_count", "INTEGER"),
+                ("achievement_count", "INTEGER"),
+                ("kudos_count", "INTEGER"),
+                ("has_kudoed", "BOOLEAN DEFAULT 0"),
+                ("perceived_exertion", "REAL"),
+            ]
+
+            with self.get_connection() as conn:
+                for col_name, col_def in new_columns:
+                    if col_name not in column_names:
+                        conn.execute(f"ALTER TABLE activities ADD COLUMN {col_name} {col_def}")
+                        print(f"✓ Added {col_name} column to activities table")
+
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            print(f"! Migration check failed: {exc}")
 
     def execute_query(self, query: str, params: tuple = ()) -> List[sqlite3.Row]:
         """
@@ -195,3 +233,111 @@ class DatabaseManager:
         """Delete all stream records for an activity."""
         with self.get_connection() as conn:
             conn.execute("DELETE FROM activity_streams WHERE activity_id = ?", (activity_id,))
+
+    # ── Training Plan Methods ──────────────────────────────────────────
+
+    def insert_training_plan(self, plan_data: Dict[str, Any]) -> int:
+        """Insert a training plan and return its plan_id."""
+        columns = ", ".join(plan_data.keys())
+        placeholders = ", ".join(["?" for _ in plan_data])
+        query = f"INSERT INTO training_plans ({columns}) VALUES ({placeholders})"
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(plan_data.values()))
+            return cursor.lastrowid
+
+    def insert_planned_workouts(self, workouts: List[Dict[str, Any]]):
+        """Batch insert planned workout records."""
+        if not workouts:
+            return
+
+        columns = list(workouts[0].keys())
+        columns_str = ", ".join(columns)
+        placeholders = ", ".join(["?" for _ in columns])
+        query = f"INSERT INTO planned_workouts ({columns_str}) VALUES ({placeholders})"
+
+        params_list = [tuple(w[col] for col in columns) for w in workouts]
+        self.execute_many(query, params_list)
+
+    def get_active_plan(self) -> Optional[Dict[str, Any]]:
+        """Get the current active training plan with its workouts."""
+        query = self.load_query("get_active_plan")
+        rows = self.execute_query(query)
+
+        if not rows:
+            return None
+
+        plan = {
+            "plan_id": rows[0]["plan_id"],
+            "goal": rows[0]["goal"],
+            "start_date": rows[0]["start_date"],
+            "end_date": rows[0]["end_date"],
+            "status": rows[0]["status"],
+            "created_at": rows[0]["created_at"],
+            "raw_llm_response": rows[0]["raw_llm_response"],
+            "workouts": [],
+        }
+
+        for row in rows:
+            if row["workout_id"] is not None:
+                plan["workouts"].append(
+                    {
+                        "workout_id": row["workout_id"],
+                        "workout_date": row["workout_date"],
+                        "workout_type": row["workout_type"],
+                        "description": row["description"],
+                        "target_distance_km": row["target_distance_km"],
+                        "target_duration_min": row["target_duration_min"],
+                        "target_pace_min_km": row["target_pace_min_km"],
+                        "target_hr_zone": row["target_hr_zone"],
+                        "completed": row["completed"],
+                        "matched_activity_id": row["matched_activity_id"],
+                        "feedback": row["feedback"],
+                    }
+                )
+
+        return plan
+
+    def get_planned_workouts(self, plan_id: int) -> List[Dict[str, Any]]:
+        """Get all planned workouts for a plan, with matched activity data."""
+        query = self.load_query("get_planned_workouts")
+        rows = self.execute_query(query, (plan_id,))
+        return [dict(row) for row in rows]
+
+    def update_workout_completion(self, workout_id: int, activity_id: int, feedback: str):
+        """Mark a workout as completed and attach matched activity + feedback."""
+        query = """
+            UPDATE planned_workouts
+            SET completed = 1,
+                matched_activity_id = ?,
+                feedback = ?
+            WHERE workout_id = ?
+        """
+        with self.get_connection() as conn:
+            conn.execute(query, (activity_id, feedback, workout_id))
+
+    def archive_plan(self, plan_id: int):
+        """Archive a training plan (set status to 'archived')."""
+        query = """
+            UPDATE training_plans
+            SET status = 'archived', updated_at = CURRENT_TIMESTAMP
+            WHERE plan_id = ?
+        """
+        with self.get_connection() as conn:
+            conn.execute(query, (plan_id,))
+
+    def get_plan_history(self) -> List[Dict[str, Any]]:
+        """Return all training plans (active + archived) ordered by creation date."""
+        rows = self.execute_query(
+            """
+            SELECT plan_id, goal, start_date, end_date, status, created_at,
+                   (SELECT COUNT(*) FROM planned_workouts
+                    WHERE plan_id = tp.plan_id) AS workout_count,
+                   (SELECT COUNT(*) FROM planned_workouts
+                    WHERE plan_id = tp.plan_id AND completed = 1) AS completed_count
+            FROM training_plans tp
+            ORDER BY created_at DESC
+            """
+        )
+        return [dict(row) for row in rows]

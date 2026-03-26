@@ -54,8 +54,18 @@ CREATE TABLE IF NOT EXISTS activities (
     athlete_weight REAL,
     workout_type INTEGER,
     commute BOOLEAN DEFAULT 0,
+    trainer BOOLEAN DEFAULT 0,
     gear TEXT,
     filename TEXT,
+
+    -- Strava engagement / effort metrics
+    suffer_score INTEGER,            -- Relative Effort / Suffer Score
+    sport_type TEXT,                 -- Preferred field (replaces deprecated 'type')
+    pr_count INTEGER,                -- Personal records set in this activity
+    achievement_count INTEGER,       -- Total achievements earned
+    kudos_count INTEGER,             -- Social kudos
+    has_kudoed BOOLEAN DEFAULT 0,    -- Whether the authenticated athlete kudoed it
+    perceived_exertion REAL,         -- 1-10 scale (from detailed endpoint only)
     
     -- Metadata
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -166,3 +176,40 @@ SELECT
 FROM activities
 WHERE activity_type IS NOT NULL
 GROUP BY activity_type;
+
+-- Training plans table (one per goal)
+CREATE TABLE IF NOT EXISTS training_plans (
+    plan_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal TEXT NOT NULL,
+    start_date DATE NOT NULL,
+    end_date DATE,
+    status TEXT DEFAULT 'active',  -- active, completed, archived
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    raw_llm_response TEXT  -- original LLM text for reference
+);
+
+-- Individual workouts within a plan
+CREATE TABLE IF NOT EXISTS planned_workouts (
+    workout_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    workout_date DATE NOT NULL,
+    workout_type TEXT NOT NULL,     -- easy_run, tempo, intervals, long_run, rest, cross_training
+    description TEXT,               -- e.g. "Easy run, Zone 2"
+    target_distance_km REAL,
+    target_duration_min REAL,
+    target_pace_min_km REAL,
+    target_hr_zone TEXT,            -- e.g. "Zone 2"
+    completed BOOLEAN DEFAULT 0,
+    matched_activity_id INTEGER,    -- FK to activities if matched
+    feedback TEXT,                  -- AI feedback for this workout
+    FOREIGN KEY (plan_id) REFERENCES training_plans(plan_id) ON DELETE CASCADE,
+    FOREIGN KEY (matched_activity_id) REFERENCES activities(activity_id)
+);
+
+-- Training plan indexes
+CREATE INDEX IF NOT EXISTS idx_plans_status ON training_plans(status);
+CREATE INDEX IF NOT EXISTS idx_workouts_plan ON planned_workouts(plan_id);
+CREATE INDEX IF NOT EXISTS idx_workouts_date ON planned_workouts(workout_date);
+CREATE INDEX IF NOT EXISTS idx_workouts_matched ON planned_workouts(matched_activity_id)
+    WHERE matched_activity_id IS NOT NULL;

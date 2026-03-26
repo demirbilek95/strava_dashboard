@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from strava.utils.activity_processing import calculate_per_km_hr_data
+from strava.constants import ZONE_COLORS
 
 
 def _filter_and_setup(df):
@@ -180,6 +181,8 @@ def _plot_scatter(filtered_df, zones):
 
     # Format activity_date for display
     km_data["activity_date_str"] = km_data["activity_date"].dt.strftime("%Y-%m-%d")
+    short_date = km_data["activity_date"].dt.strftime("%b %d")
+    km_data["display_name"] = km_data["activity_name"] + " (" + short_date + ")"
 
     # Create hover template
     hover_cols = ["activity_name", "activity_date_str", "km_segment"]
@@ -188,13 +191,14 @@ def _plot_scatter(filtered_df, zones):
         km_data,
         x="avg_pace",
         y="avg_hr",
-        color="activity_name",
+        color="display_name",
         hover_data=hover_cols,
         title="Heart Rate vs Pace (Per Kilometer) with Zones",
         labels={
             "avg_pace": "Pace (min/km)",
             "avg_hr": "HR (bpm)",
-            "activity_name": "Activity",
+            "display_name": "Activity",
+            "activity_name": "Activity Name",
             "activity_date_str": "Date",
             "km_segment": "Kilometer",
         },
@@ -202,7 +206,13 @@ def _plot_scatter(filtered_df, zones):
     )
 
     # Add HR zone backgrounds
-    colors = ["gray", "blue", "green", "orange", "red"]
+    colors = [
+        ZONE_COLORS.get("Z1", "lightblue"),
+        ZONE_COLORS.get("Z2", "green"),
+        ZONE_COLORS.get("Z3", "yellow"),
+        ZONE_COLORS.get("Z4", "orange"),
+        ZONE_COLORS.get("Z5", "red"),
+    ]
     limits = [0, z1, z2, z3, z4, 220]
     labels = ["Z1", "Z2", "Z3", "Z4", "Z5"]
 
@@ -256,11 +266,11 @@ def _plot_zone_distribution(filtered_df, zones):
     km_data["HR Zone"] = km_data["avg_hr"].apply(get_zone)
 
     zone_colors = {
-        "Zone 1": "gray",
-        "Zone 2": "blue",
-        "Zone 3": "green",
-        "Zone 4": "orange",
-        "Zone 5": "red",
+        "Zone 1": ZONE_COLORS.get("Z1", "lightblue"),
+        "Zone 2": ZONE_COLORS.get("Z2", "green"),
+        "Zone 3": ZONE_COLORS.get("Z3", "yellow"),
+        "Zone 4": ZONE_COLORS.get("Z4", "orange"),
+        "Zone 5": ZONE_COLORS.get("Z5", "red"),
     }
 
     metric_choice = st.radio("Distribution Metric", ["Time", "Distance"], horizontal=True)
