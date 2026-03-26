@@ -143,9 +143,10 @@ class StravaAPI:
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
         """Make an authenticated request with automatic token refresh and rate limit retry."""
         import time
+
         max_retries = 3
         base_delay = 5
-        
+
         for attempt in range(max_retries):
             response = self.session.request(method, url, **kwargs)
 
@@ -167,13 +168,15 @@ class StravaAPI:
                     print(f"Token refresh failed: {exc}")
 
             if response.status_code == 429 and attempt < max_retries - 1:
-                print(f"API Rate Limit 429. Retrying in {base_delay}s (Attempt {attempt+1}/{max_retries})...")
+                print(
+                    f"API Rate Limit 429. Retrying in {base_delay}s (Attempt {attempt+1}/{max_retries})..."
+                )
                 time.sleep(base_delay)
                 base_delay *= 2  # Exponential backoff
                 continue
 
             return response
-            
+
         return response
 
     def get_athlete(self) -> Dict[str, Any]:

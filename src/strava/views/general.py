@@ -174,7 +174,7 @@ def _plot_relative_score(filtered_df):
         .dt.to_period("W-SUN")
         .apply(lambda r: r.start_time)
     )
-    
+
     weekly_score = plot_df.groupby("Week")["suffer_score"].sum().reset_index()
 
     # Fill missing weeks with 0

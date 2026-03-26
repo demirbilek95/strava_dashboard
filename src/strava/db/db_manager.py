@@ -332,7 +332,8 @@ class DatabaseManager:
         rows = self.execute_query(
             """
             SELECT plan_id, goal, start_date, end_date, status, created_at,
-                   (SELECT COUNT(*) FROM planned_workouts WHERE plan_id = tp.plan_id) AS workout_count,
+                   (SELECT COUNT(*) FROM planned_workouts
+                    WHERE plan_id = tp.plan_id) AS workout_count,
                    (SELECT COUNT(*) FROM planned_workouts
                     WHERE plan_id = tp.plan_id AND completed = 1) AS completed_count
             FROM training_plans tp

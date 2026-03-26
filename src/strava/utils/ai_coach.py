@@ -107,9 +107,9 @@ COACH_TOOLS = [
                     "properties": {
                         "limit": {
                             "type": "INTEGER",
-                            "description": "Number of recent races to retrieve (default 5, max 10)."
+                            "description": "Number of recent races to retrieve (default 5, max 10).",
                         }
-                    }
+                    },
                 },
             ),
             types.FunctionDeclaration(
@@ -622,7 +622,7 @@ class AICoach:
             races = df[df["workout_type"] == 1]
         if races.empty:
             races = df[df["activity_name"].str.contains("race", case=False, na=False)]
-        
+
         if races.empty:
             return "No races found."
 
@@ -631,21 +631,37 @@ class AICoach:
         for _, row in races.head(limit).iterrows():
             date_str = row["activity_date"].strftime("%Y-%m-%d")
             name = row.get("activity_name", "Race")
-            
+
             dist_m = row.get("distance")
             dist = f"{dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "N/A"
-            time_str = _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
-            
+            time_str = (
+                _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
+            )
+
             pace = (
                 _pace_from_time_dist(row["moving_time"], dist_m)
                 if pd.notnull(row.get("moving_time")) and pd.notnull(dist_m) and dist_m > 0
                 else "N/A"
             )
-            hr = f"{int(row['average_heart_rate'])}bpm" if pd.notnull(row.get("average_heart_rate")) else "N/A"
-            
-            score_col = "suffer_score" if "suffer_score" in row and pd.notnull(row["suffer_score"]) else "relative_effort"
-            score = int(row[score_col]) if score_col in row and pd.notnull(row.get(score_col)) else "N/A"
-            elev = f"{row.get('elevation_gain')}m" if pd.notnull(row.get("elevation_gain")) else "N/A"
+            hr = (
+                f"{int(row['average_heart_rate'])}bpm"
+                if pd.notnull(row.get("average_heart_rate"))
+                else "N/A"
+            )
+
+            score_col = (
+                "suffer_score"
+                if "suffer_score" in row and pd.notnull(row["suffer_score"])
+                else "relative_effort"
+            )
+            score = (
+                int(row[score_col])
+                if score_col in row and pd.notnull(row.get(score_col))
+                else "N/A"
+            )
+            elev = (
+                f"{row.get('elevation_gain')}m" if pd.notnull(row.get("elevation_gain")) else "N/A"
+            )
 
             lines.append(
                 f"- {date_str} '{name}' | Dist: {dist} | Time: {time_str} | "
@@ -903,7 +919,7 @@ Your Mission:
 - You MUST keep past workouts unchanged. Do not alter already-completed sessions.
 - They want to change their plan: "{user_request}"
 - Use compare_plan_vs_actual and get_recent_activities as needed.
-- Monitor training load carefully. Has the weekly suffer score increased too quickly? Adjust load appropriately. 
+- Monitor training load carefully. Has the weekly suffer score increased too quickly? Adjust load appropriately.
 - BE COMPLETELY OBJECTIVE. Push back on unreasonable adaptations.
 
 ANTI-HALLUCINATION RULES:

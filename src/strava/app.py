@@ -70,7 +70,7 @@ def show_welcome_page():
     )
 
     # ── Steps card ──────────────────────────────────────────────────
-    col_left, col_center, col_right = st.columns([1, 3, 1])
+    _, col_center, _ = st.columns([1, 3, 1])
     with col_center:
         st.markdown("---")
 

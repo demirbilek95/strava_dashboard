@@ -14,7 +14,7 @@ from strava.utils.strava_api import StravaAPI
 _MAX_WORKERS = 3
 
 
-class StravaImporter:
+class StravaImporter:  # pylint: disable=too-few-public-methods
     """Imports Strava activities and streams into the local database."""
 
     def __init__(self, db_manager: DatabaseManager, api_client: StravaAPI):
@@ -43,7 +43,8 @@ class StravaImporter:
         db_latest = self.db.get_latest_activity_timestamp()
 
         # If DB is empty, default to the last 1 year to avoid massive rate limits
-        fetch_after = db_latest if db_latest is not None else int(time.time() - (365 * 24 * 60 * 60))
+        one_year_ago = int(time.time() - (365 * 24 * 60 * 60))
+        fetch_after = db_latest if db_latest is not None else one_year_ago
 
         # ── Phase 1: Fetch activity summaries (fast, paginated) ────
         activities = self.api.get_all_activities(after=fetch_after)
