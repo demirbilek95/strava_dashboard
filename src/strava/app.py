@@ -134,6 +134,11 @@ def show_welcome_page():
                 handle_authorization(api, auth_code)
 
 
+# Session-state keys used by date-range pickers across views.
+# Cleared on sync so plots always default to showing the latest data window.
+_DATE_FILTER_KEYS = ("gen_start", "gen_end", "det_start", "det_end")
+
+
 def auto_sync(database: DatabaseManager) -> None:
     """Incrementally sync new activities once per session on page load."""
     st.session_state["auto_synced"] = True
@@ -143,69 +148,13 @@ def auto_sync(database: DatabaseManager) -> None:
         with st.spinner("Checking for new activities..."):
             count = importer.import_all_data()
         if count:
+            # Drop stale date-filter state so plots pick up fresh defaults.
+            for key in _DATE_FILTER_KEYS:
+                st.session_state.pop(key, None)
             st.cache_data.clear()
             st.rerun()
     except Exception:  # pylint: disable=broad-exception-caught
         pass  # Silent failure — don't interrupt the dashboard
-
-
-_RANGE_OPTIONS = {
-    "Last 3 months": 3,
-    "Last 6 months": 6,
-    "Last year": 12,
-    "All time": None,
-}
-
-
-def handle_refresh(database: DatabaseManager):
-    """Handle the sidebar refresh logic."""
-    selected_label = st.sidebar.selectbox(
-        "Data range",
-        list(_RANGE_OPTIONS.keys()),
-        index=0,
-        key="refresh_range",
-    )
-    lookback_months = _RANGE_OPTIONS[selected_label]
-    st.sidebar.caption(
-        "Selecting a longer range fetches missing historical data. "
-        "Activities already synced are not re-downloaded."
-    )
-
-    if st.sidebar.button("🔄 Refresh Data from Strava"):
-        try:
-            api = StravaAPI()
-            importer = StravaImporter(database, api)
-
-            progress_bar = st.sidebar.progress(0)
-            status_text = st.sidebar.empty()
-
-            def update_progress(msg, percent):
-                status_text.text(msg)
-                progress_bar.progress(percent)
-
-            with st.spinner("Refreshing data..."):
-                count = importer.import_all_data(
-                    progress_callback=update_progress,
-                    lookback_months=lookback_months,
-                )
-
-            if count > 0:
-                st.sidebar.success(f"Successfully imported {count} new activities!")
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.sidebar.info("Data is already up to date.")
-                if st.sidebar.button("🧹 Clear App Cache"):
-                    st.cache_data.clear()
-                    st.rerun()
-
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            st.sidebar.error(f"Update failed: {exc}")
-            if "401" in str(exc) or "missing" in str(exc).lower():
-                st.sidebar.warning("Permissions might be missing or expired.")
-                if st.sidebar.button("🔑 Re-authorize Strava"):
-                    st.session_state["force_reauth"] = True
-                    st.rerun()
 
 
 def main():
@@ -259,8 +208,6 @@ def main():
         st.session_state.active_page = page_options[0]
 
     page = st.sidebar.radio("Go to", page_options, key="active_page")
-
-    handle_refresh(database)
 
     # Global Zone Settings
     st.sidebar.markdown("---")
