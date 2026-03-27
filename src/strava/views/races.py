@@ -1,3 +1,4 @@
+import time
 from typing import Optional
 
 import pandas as pd
@@ -117,13 +118,13 @@ def _calculate_metrics(row, zones):
     }
 
 
+_RACES_IMPORTED_KEY = "races_imported_at"
+
+
 def _auto_fetch_races(database: DatabaseManager) -> None:
-    """Fetch all-time race history once per session, silently in the background."""
+    """Fetch all-time race history once (persisted in DB), not every session."""
     from strava.db.api_importer import StravaImporter  # pylint: disable=import-outside-toplevel
     from strava.utils.strava_api import StravaAPI  # pylint: disable=import-outside-toplevel
-
-    # Mark as attempted immediately so a rerun() below doesn't re-trigger.
-    st.session_state["races_fetched"] = True
 
     try:
         api = StravaAPI()
@@ -136,6 +137,8 @@ def _auto_fetch_races(database: DatabaseManager) -> None:
             progress_bar.progress(pct)
 
         count = importer.import_races(progress_callback=_cb)
+        # Persist the flag regardless of count — even "no races" means we ran.
+        database.set_setting(_RACES_IMPORTED_KEY, str(int(time.time())))
         if count:
             st.cache_data.clear()
             st.rerun()
@@ -152,7 +155,7 @@ def page_races(
     st.header("Race Analysis")
     st.caption("Detailed view of your races and top performances.")
 
-    if database is not None and "races_fetched" not in st.session_state:
+    if database is not None and database.get_setting(_RACES_IMPORTED_KEY) is None:
         _auto_fetch_races(database)
 
     if "activity_type" in df.columns:

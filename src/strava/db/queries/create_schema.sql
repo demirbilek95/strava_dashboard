@@ -207,6 +207,12 @@ CREATE TABLE IF NOT EXISTS planned_workouts (
     FOREIGN KEY (matched_activity_id) REFERENCES activities(activity_id)
 );
 
+-- Key-value store for app-level flags and timestamps
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Training plan indexes
 CREATE INDEX IF NOT EXISTS idx_plans_status ON training_plans(status);
 CREATE INDEX IF NOT EXISTS idx_workouts_plan ON planned_workouts(plan_id);
