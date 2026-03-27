@@ -36,10 +36,9 @@ def handle_authorization(api: StravaAPI, auth_code: str):
             progress_bar.progress(percent)
 
         with st.spinner(
-            "Importing data from Strava… "
-            "Streams are fetched in parallel — this is much faster now!"
+            "Importing last 3 months of data from Strava… Rate-limited for safety."
         ):
-            importer.import_all_data(progress_callback=update_progress)
+            importer.import_all_data(progress_callback=update_progress, lookback_months=3)
 
         st.success("Import complete! Loading dashboard...")
         st.cache_data.clear()
@@ -98,8 +97,8 @@ def show_welcome_page():
                     <div style="font-size:2.5rem;">📊</div>
                     <h3 style="margin:0.5rem 0 0.25rem">Step 2</h3>
                     <p style="color:#bbb; font-size:0.9rem; margin:0">
-                        Your activities are imported automatically — streams are
-                        fetched in parallel so it won't take long!
+                        Your last 3 months of activities are imported automatically.
+                        Fetch more data (up to all time) via the sidebar after connecting.
                     </p>
                 </div>
                 """,
@@ -137,8 +136,27 @@ def show_welcome_page():
                 handle_authorization(api, auth_code)
 
 
+_RANGE_OPTIONS = {
+    "Last 3 months": 3,
+    "Last 6 months": 6,
+    "Last year": 12,
+    "All time": None,
+}
+
+
 def handle_refresh(database: DatabaseManager):
     """Handle the sidebar refresh logic."""
+    selected_label = st.sidebar.selectbox(
+        "Data range",
+        list(_RANGE_OPTIONS.keys()),
+        index=0,
+        key="refresh_range",
+    )
+    lookback_months = _RANGE_OPTIONS[selected_label]
+    st.sidebar.caption(
+        "Range only applies to fresh imports; existing data is always synced incrementally."
+    )
+
     if st.sidebar.button("🔄 Refresh Data from Strava"):
         try:
             api = StravaAPI()
@@ -152,7 +170,10 @@ def handle_refresh(database: DatabaseManager):
                 progress_bar.progress(percent)
 
             with st.spinner("Refreshing data..."):
-                count = importer.import_all_data(progress_callback=update_progress)
+                count = importer.import_all_data(
+                    progress_callback=update_progress,
+                    lookback_months=lookback_months,
+                )
 
             if count > 0:
                 st.sidebar.success(f"Successfully imported {count} new activities!")
