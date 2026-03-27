@@ -1,3 +1,5 @@
+import datetime
+
 import streamlit as st
 from strava.data import load_data
 from strava.db.db_manager import DatabaseManager
@@ -134,9 +136,17 @@ def show_welcome_page():
                 handle_authorization(api, auth_code)
 
 
-# Session-state keys used by period selectors across views.
-# Cleared on sync so selectors re-render with their defaults after new data arrives.
-_DATE_FILTER_KEYS = ("gen_period", "det_period")
+_PERIOD_OPTIONS = {
+    "Last month": 30,
+    "Last 3 months": 90,
+    "Last 6 months": 180,
+    "Last year": 365,
+    "All time": None,
+}
+
+# Session-state key for the global period selector.
+# Cleared on sync so the selector resets after new data arrives.
+_DATE_FILTER_KEYS = ("period",)
 
 
 def auto_sync(database: DatabaseManager) -> None:
@@ -209,6 +219,20 @@ def main():
 
     page = st.sidebar.radio("Go to", page_options, key="active_page")
 
+    # ── Period selector (above HR zones) ───────────────────────────
+    st.sidebar.markdown("---")
+    selected_period = st.sidebar.selectbox(
+        "Period",
+        list(_PERIOD_OPTIONS.keys()),
+        index=1,  # default: Last 3 months
+        key="period",
+    )
+    days = _PERIOD_OPTIONS[selected_period]
+
+    start_date = (
+        (datetime.date.today() - datetime.timedelta(days=days)) if days is not None else None
+    )
+
     # Global Zone Settings
     st.sidebar.markdown("---")
     st.sidebar.markdown("### Heart Rate Zones")
@@ -220,9 +244,9 @@ def main():
     zones = [z1, z2, z3, z4]
 
     if page == "General Overview":
-        page_general(dataframe, zones)
+        page_general(dataframe, zones, start_date)
     elif page == "Activity Run Details":
-        page_activity_run_details(dataframe, zones)
+        page_activity_run_details(dataframe, zones, start_date)
     elif page == "Deep Dive":
         page_recent_activities(dataframe, zones)
     elif page == "AI Coach":

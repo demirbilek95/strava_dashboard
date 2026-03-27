@@ -1,4 +1,3 @@
-from datetime import timedelta
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -6,34 +5,16 @@ import plotly.express as px
 from strava.constants import ZONE_COLORS, ZONE_ORDER
 
 
-_PERIOD_OPTIONS = {
-    "Last month": timedelta(days=30),
-    "Last 3 months": timedelta(days=90),
-    "Last 6 months": timedelta(days=180),
-    "Last year": timedelta(days=365),
-    "All time": None,
-}
-
-
-def _filter_by_date(df):
-    st.sidebar.markdown("### General Options")
-
+def _filter_by_date(df, start_date):
     if df.empty:
         st.warning("No data available")
         return df
 
     max_date = df["activity_date"].max().date()
-
-    selected = st.sidebar.selectbox(
-        "Period",
-        list(_PERIOD_OPTIONS.keys()),
-        index=1,  # default: Last 3 months
-        key="gen_period",
+    effective_start = start_date if start_date is not None else df["activity_date"].min().date()
+    mask = (df["activity_date"].dt.date >= effective_start) & (
+        df["activity_date"].dt.date <= max_date
     )
-    delta = _PERIOD_OPTIONS[selected]
-    start_date = max_date - delta if delta is not None else df["activity_date"].min().date()
-
-    mask = (df["activity_date"].dt.date >= start_date) & (df["activity_date"].dt.date <= max_date)
     return df.loc[mask].copy()
 
 
@@ -255,10 +236,10 @@ def _display_recent_activities(filtered_df):
     st.dataframe(final_df, width="stretch", hide_index=True)
 
 
-def page_general(df, zones):
+def page_general(df, zones, start_date=None):
     st.header("General Overview")
 
-    filtered_df = _filter_by_date(df)
+    filtered_df = _filter_by_date(df, start_date)
 
     _display_metrics(filtered_df)
     _plot_weekly_duration(filtered_df)

@@ -1,4 +1,3 @@
-from datetime import timedelta
 from typing import Optional
 
 import streamlit as st
@@ -8,18 +7,7 @@ from strava.utils.activity_processing import calculate_per_km_hr_data
 from strava.constants import ZONE_COLORS
 
 
-_PERIOD_OPTIONS = {
-    "Last month": timedelta(days=30),
-    "Last 3 months": timedelta(days=90),
-    "Last 6 months": timedelta(days=180),
-    "Last year": timedelta(days=365),
-    "All time": None,
-}
-
-
-def _filter_and_setup(df) -> Optional[pd.DataFrame]:
-    st.sidebar.markdown("### Analysis Options")
-
+def _filter_and_setup(df, start_date=None) -> Optional[pd.DataFrame]:
     if "activity_type" in df.columns:
         df_run = df[(~df["commute"]) & (df["activity_type"] == "Run")].copy()
     else:
@@ -30,17 +18,8 @@ def _filter_and_setup(df) -> Optional[pd.DataFrame]:
         return None
 
     max_date = df_run["activity_date"].max().date()
-
-    selected = st.sidebar.selectbox(
-        "Period",
-        list(_PERIOD_OPTIONS.keys()),
-        index=1,  # default: Last 3 months
-        key="det_period",
-    )
-    delta = _PERIOD_OPTIONS[selected]
-    start_date = max_date - delta if delta is not None else df_run["activity_date"].min().date()
-
-    mask = (df_run["activity_date"].dt.date >= start_date) & (
+    effective_start = start_date if start_date is not None else df_run["activity_date"].min().date()
+    mask = (df_run["activity_date"].dt.date >= effective_start) & (
         df_run["activity_date"].dt.date <= max_date
     )
     return df_run.loc[mask].copy()
@@ -306,10 +285,10 @@ def _plot_zone_distribution(filtered_df, zones):
         st.info("No data in zones")
 
 
-def page_activity_run_details(df, zones):
+def page_activity_run_details(df, zones, start_date=None):
     st.header("Activity Run Details")
 
-    filtered_df = _filter_and_setup(df)
+    filtered_df = _filter_and_setup(df, start_date)
     if filtered_df is None:
         return
 
