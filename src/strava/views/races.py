@@ -113,7 +113,7 @@ def _calculate_metrics(row, zones):
     }
 
 
-def page_races(df, zones):
+def page_races(df, zones):  # pylint: disable=too-many-branches
     st.header("Race Analysis")
     st.caption("Detailed view of your races and top performances.")
 
