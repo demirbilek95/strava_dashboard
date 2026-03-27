@@ -6,6 +6,15 @@ import plotly.express as px
 from strava.constants import ZONE_COLORS, ZONE_ORDER
 
 
+_PERIOD_OPTIONS = {
+    "Last month": timedelta(days=30),
+    "Last 3 months": timedelta(days=90),
+    "Last 6 months": timedelta(days=180),
+    "Last year": timedelta(days=365),
+    "All time": None,
+}
+
+
 def _filter_by_date(df):
     st.sidebar.markdown("### General Options")
 
@@ -13,25 +22,19 @@ def _filter_by_date(df):
         st.warning("No data available")
         return df
 
-    min_date = df["activity_date"].min().date()
     max_date = df["activity_date"].max().date()
-    default_start = max_date - timedelta(weeks=4)
 
-    start_date = st.sidebar.date_input(
-        "Start Date",
-        value=default_start,
-        min_value=min_date,
-        max_value=max_date,
-        key="gen_start",
+    selected = st.sidebar.selectbox(
+        "Period",
+        list(_PERIOD_OPTIONS.keys()),
+        index=1,  # default: Last 3 months
+        key="gen_period",
     )
-    end_date = st.sidebar.date_input(
-        "End Date", value=max_date, min_value=min_date, max_value=max_date, key="gen_end"
-    )
+    delta = _PERIOD_OPTIONS[selected]
+    start_date = max_date - delta if delta is not None else df["activity_date"].min().date()
 
-    mask = (df["activity_date"].dt.date >= start_date) & (df["activity_date"].dt.date <= end_date)
-    filtered_df = df.loc[mask].copy()
-
-    return filtered_df
+    mask = (df["activity_date"].dt.date >= start_date) & (df["activity_date"].dt.date <= max_date)
+    return df.loc[mask].copy()
 
 
 def _display_metrics(filtered_df):

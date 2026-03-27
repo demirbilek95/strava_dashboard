@@ -1,4 +1,5 @@
 from datetime import timedelta
+from typing import Optional
 
 import streamlit as st
 import pandas as pd
@@ -7,7 +8,16 @@ from strava.utils.activity_processing import calculate_per_km_hr_data
 from strava.constants import ZONE_COLORS
 
 
-def _filter_and_setup(df):
+_PERIOD_OPTIONS = {
+    "Last month": timedelta(days=30),
+    "Last 3 months": timedelta(days=90),
+    "Last 6 months": timedelta(days=180),
+    "Last year": timedelta(days=365),
+    "All time": None,
+}
+
+
+def _filter_and_setup(df) -> Optional[pd.DataFrame]:
     st.sidebar.markdown("### Analysis Options")
 
     if "activity_type" in df.columns:
@@ -19,23 +29,21 @@ def _filter_and_setup(df):
         st.warning("No running activities found.")
         return None
 
-    min_date = df_run["activity_date"].min().date()
     max_date = df_run["activity_date"].max().date()
-    default_start = max_date - timedelta(weeks=4)
 
-    start_date = st.sidebar.date_input(
-        "Start Date", value=default_start, min_value=min_date, max_value=max_date, key="det_start"
+    selected = st.sidebar.selectbox(
+        "Period",
+        list(_PERIOD_OPTIONS.keys()),
+        index=1,  # default: Last 3 months
+        key="det_period",
     )
-    end_date = st.sidebar.date_input(
-        "End Date", value=max_date, min_value=min_date, max_value=max_date, key="det_end"
-    )
+    delta = _PERIOD_OPTIONS[selected]
+    start_date = max_date - delta if delta is not None else df_run["activity_date"].min().date()
 
     mask = (df_run["activity_date"].dt.date >= start_date) & (
-        df_run["activity_date"].dt.date <= end_date
+        df_run["activity_date"].dt.date <= max_date
     )
-    filtered_df = df_run.loc[mask].copy()
-
-    return filtered_df
+    return df_run.loc[mask].copy()
 
 
 def _calculate_metrics(filtered_df):

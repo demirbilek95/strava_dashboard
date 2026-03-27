@@ -134,9 +134,9 @@ def show_welcome_page():
                 handle_authorization(api, auth_code)
 
 
-# Session-state keys used by date-range pickers across views.
-# Cleared on sync so plots always default to showing the latest data window.
-_DATE_FILTER_KEYS = ("gen_start", "gen_end", "det_start", "det_end")
+# Session-state keys used by period selectors across views.
+# Cleared on sync so selectors re-render with their defaults after new data arrives.
+_DATE_FILTER_KEYS = ("gen_period", "det_period")
 
 
 def auto_sync(database: DatabaseManager) -> None:
