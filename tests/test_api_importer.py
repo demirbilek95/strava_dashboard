@@ -17,6 +17,7 @@ from strava.db.api_importer import _RateLimiter, StravaImporter
 def mock_db():
     db = MagicMock()
     db.get_latest_activity_timestamp.return_value = None
+    db.activity_has_streams.return_value = False  # default: activity not yet synced
     return db
 
 
@@ -109,19 +110,45 @@ def test_import_fresh_db_explicit_6_months(mock_db, mock_api):
     assert after_arg == expected
 
 
-def test_import_existing_db_uses_db_latest(mock_db, mock_api):
-    """Existing DB should always use the DB watermark for incremental sync."""
-    watermark = 1_690_000_000
-    mock_db.get_latest_activity_timestamp.return_value = watermark
-    mock_api.get_all_activities.return_value = []
+def test_import_existing_db_incremental_when_db_covers_window(mock_db, mock_api):
+    """When DB already covers the requested window, use db_latest (incremental sync)."""
+    # db_latest is 4 months ago; 3-month lookback cutoff is more recent → use db_latest.
+    with patch("strava.db.api_importer.time") as mock_time:
+        now = 1_750_000_000
+        mock_time.time.return_value = now
+        watermark = now - int(4 * 30 * 24 * 60 * 60)  # 4 months ago
+        mock_db.get_latest_activity_timestamp.return_value = watermark
+        mock_api.get_all_activities.return_value = []
 
-    imp = StravaImporter(mock_db, mock_api)
-    imp._rate_limiter = MagicMock()
+        imp = StravaImporter(mock_db, mock_api)
+        imp._rate_limiter = MagicMock()
 
-    imp.import_all_data(lookback_months=3)
+        imp.import_all_data(lookback_months=3)
 
     after_arg = mock_api.get_all_activities.call_args.kwargs.get("after")
-    assert after_arg == watermark
+    expected_cutoff = now - int(3 * 30 * 24 * 60 * 60)  # 3-month cutoff
+    # min(4-months-ago, 3-months-ago) = 4-months-ago = watermark
+    assert after_arg == min(watermark, expected_cutoff)
+
+
+def test_import_existing_db_backfills_when_user_requests_more_history(mock_db, mock_api):
+    """When user selects a longer range than the DB covers, fetch the historical gap."""
+    # db_latest is 7 days ago (recent sync); user requests 1 year → use 1-year cutoff.
+    with patch("strava.db.api_importer.time") as mock_time:
+        now = 1_750_000_000
+        mock_time.time.return_value = now
+        watermark = now - int(7 * 24 * 60 * 60)  # 7 days ago
+        mock_db.get_latest_activity_timestamp.return_value = watermark
+        mock_api.get_all_activities.return_value = []
+
+        imp = StravaImporter(mock_db, mock_api)
+        imp._rate_limiter = MagicMock()
+
+        imp.import_all_data(lookback_months=12)
+
+    after_arg = mock_api.get_all_activities.call_args.kwargs.get("after")
+    expected_cutoff = now - int(12 * 30 * 24 * 60 * 60)  # 1-year cutoff
+    assert after_arg == expected_cutoff
 
 
 def test_import_all_time_passes_none(mock_db, mock_api):
@@ -162,6 +189,28 @@ def test_progress_callback_messages(mock_db, mock_api):
     assert "Found 2" in all_text, "Should report activity count"
     assert "rate-limited" in all_text.lower(), "Should mention rate limiting"
     assert "Import complete!" in messages, "Should finish with completion message"
+
+
+# ── Stream-skip optimisation ──────────────────────────────────────────────────
+
+
+def test_skips_stream_fetch_for_already_synced_activity(mock_db, mock_api):
+    """Activities that already have streams should not be re-fetched."""
+    mock_db.get_latest_activity_timestamp.return_value = None
+    mock_db.activity_has_streams.return_value = True  # already synced
+    mock_api.get_all_activities.return_value = [
+        {"id": 99, "start_date": "2024-06-01T09:00:00Z"},
+    ]
+
+    imp = StravaImporter(mock_db, mock_api)
+    imp._rate_limiter = MagicMock()
+
+    imp.import_all_data()
+
+    # Neither streams nor detail should be fetched.
+    mock_api.get_activity_streams.assert_not_called()
+    mock_api.get_activity_detail.assert_not_called()
+    imp._rate_limiter.acquire.assert_not_called()
 
 
 # ── Rate limiter is called per API request ────────────────────────────────────

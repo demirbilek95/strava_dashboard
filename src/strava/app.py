@@ -154,7 +154,8 @@ def handle_refresh(database: DatabaseManager):
     )
     lookback_months = _RANGE_OPTIONS[selected_label]
     st.sidebar.caption(
-        "Range only applies to fresh imports; existing data is always synced incrementally."
+        "Selecting a longer range fetches missing historical data. "
+        "Activities already synced are not re-downloaded."
     )
 
     if st.sidebar.button("🔄 Refresh Data from Strava"):

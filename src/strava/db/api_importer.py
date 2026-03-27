@@ -92,13 +92,19 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
         db_latest = self.db.get_latest_activity_timestamp()
 
         # Determine the ``after`` timestamp for the API call.
-        if db_latest is not None:
-            # Incremental sync — always use the DB watermark, ignore lookback_months.
-            fetch_after: Optional[int] = db_latest
-            _cb("Checking for new activities...", 0.0)
-        elif lookback_months is not None:
+        #
+        # When the DB already has activities we still respect the user's chosen
+        # range: if `lookback_cutoff` is *earlier* than `db_latest`, the user
+        # is asking for historical data we haven't fetched yet, so we use the
+        # lookback cutoff.  If `db_latest` is the earlier value (DB already
+        # covers the full window) we fall back to pure incremental sync.
+        if lookback_months is not None:
             seconds_back = int(lookback_months * 30 * 24 * 60 * 60)
-            fetch_after = int(time.time() - seconds_back)
+            lookback_cutoff = int(time.time() - seconds_back)
+            if db_latest is not None:
+                fetch_after: Optional[int] = min(db_latest, lookback_cutoff)
+            else:
+                fetch_after = lookback_cutoff
             _cb(f"Fetching last {lookback_months} months of activities...", 0.0)
         else:
             fetch_after = None  # All-time history
@@ -173,6 +179,11 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
         """
         activity_id = activity["id"]
         start_date = activity["start_date"]
+
+        # Skip if the activity already has complete stream data in the DB —
+        # avoids redundant API calls when backfilling historical activities.
+        if self.db.activity_has_streams(activity_id):
+            return None
 
         streams = {}
         try:

@@ -117,6 +117,19 @@ def page_races(df, zones):
     st.header("Race Analysis")
     st.caption("Detailed view of your races and top performances.")
 
+    # Warn users who may have a limited data window so they know how to fix it.
+    if not df.empty and "activity_date" in df.columns:
+        oldest = df["activity_date"].min()
+        months_of_data = (pd.Timestamp.now() - oldest).days / 30
+        if months_of_data < 11:
+            st.info(
+                f"You have **{int(months_of_data)} months** of activity data. "
+                "Race PRs from further back won't appear here. "
+                "Use **Refresh Data \u2192 Data range: Last year / All time** "
+                "in the sidebar to fetch your full history.",
+                icon="ℹ️",
+            )
+
     if "activity_type" in df.columns:
         df_runs = df[df["activity_type"] == "Run"].copy()
     else:
