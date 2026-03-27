@@ -31,7 +31,6 @@ def _filter_by_date(df):
     mask = (df["activity_date"].dt.date >= start_date) & (df["activity_date"].dt.date <= end_date)
     filtered_df = df.loc[mask].copy()
 
-    st.caption(f"Showing data from {start_date} to {end_date}")
     return filtered_df
 
 

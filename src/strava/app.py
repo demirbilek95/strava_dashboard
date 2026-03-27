@@ -134,6 +134,21 @@ def show_welcome_page():
                 handle_authorization(api, auth_code)
 
 
+def auto_sync(database: DatabaseManager) -> None:
+    """Incrementally sync new activities once per session on page load."""
+    st.session_state["auto_synced"] = True
+    try:
+        api = StravaAPI()
+        importer = StravaImporter(database, api)
+        with st.spinner("Checking for new activities..."):
+            count = importer.import_all_data()
+        if count:
+            st.cache_data.clear()
+            st.rerun()
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass  # Silent failure — don't interrupt the dashboard
+
+
 _RANGE_OPTIONS = {
     "Last 3 months": 3,
     "Last 6 months": 6,
@@ -223,6 +238,10 @@ def main():
     if activity_count == 0:
         show_welcome_page()
         return
+
+    # ── Auto-sync new activities once per session ──────────────────
+    if "auto_synced" not in st.session_state:
+        auto_sync(database)
 
     # ── Main dashboard ─────────────────────────────────────────────
     st.title("🏃 Strava Activity Analytics")

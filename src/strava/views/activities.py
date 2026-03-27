@@ -35,7 +35,6 @@ def _filter_and_setup(df):
     )
     filtered_df = df_run.loc[mask].copy()
 
-    st.caption(f"Showing Run data from {start_date} to {end_date}")
     return filtered_df
 
 

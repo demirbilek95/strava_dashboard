@@ -63,7 +63,7 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def import_all_data(
+    def import_all_data(  # pylint: disable=too-many-branches
         self,
         progress_callback: Optional[Callable[[str, float], None]] = None,
         lookback_months: Optional[int] = _DEFAULT_LOOKBACK_MONTHS,
@@ -119,12 +119,13 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
             _cb(status, 1.0)
             return 0
 
-        label = "new " if db_latest else ""
-        _cb(f"Found {total} {label}activities. Fetching details in parallel...", 0.05)
+        _cb(f"Found {total} activities. Saving summaries...", 0.05)
 
-        # ── Phase 2: Insert activity summaries (lightweight, sequential) ──
+        # ── Phase 2: Insert activity summaries; track truly new ones ──
+        count_before = self.db.get_activity_count()
         for activity in activities:
             self.db.insert_activity(self._map_activity(activity))
+        new_count = self.db.get_activity_count() - count_before
 
         _cb(f"Saved {total} activity summaries. Fetching streams & detail...", 0.15)
 
@@ -161,8 +162,12 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
             if perceived_exertion is not None:
                 self._update_perceived_exertion(activity_id, perceived_exertion)
 
-        _cb("Import complete!", 1.0)
-        return total
+        if new_count:
+            noun = "activity" if new_count == 1 else "activities"
+            _cb(f"Import complete! {new_count} new {noun} added.", 1.0)
+        else:
+            _cb("Already up to date — no new activities found.", 1.0)
+        return new_count
 
     def import_races(
         self,

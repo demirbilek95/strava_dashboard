@@ -191,7 +191,9 @@ def test_progress_callback_messages(mock_db, mock_api):
     assert "3 months" in all_text, "Should mention lookback period"
     assert "Found 2" in all_text, "Should report activity count"
     assert "rate-limited" in all_text.lower(), "Should mention rate limiting"
-    assert "Import complete!" in messages, "Should finish with completion message"
+    assert any(
+        "complete" in m.lower() or "up to date" in m.lower() for m in messages
+    ), "Should finish with a completion message"
 
 
 # ── Stream-skip optimisation ──────────────────────────────────────────────────
