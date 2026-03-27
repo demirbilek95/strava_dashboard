@@ -233,3 +233,55 @@ def test_rate_limiter_called_for_each_api_request(mock_db, mock_api):
 
     # 1 activity × 2 API calls (streams + detail) = 2 acquires.
     assert imp._rate_limiter.acquire.call_count == 2
+
+
+# ── import_races ──────────────────────────────────────────────────────────────
+
+
+def test_import_races_only_fetches_race_activities(mock_db, mock_api):
+    """import_races should only process activities with workout_type 1 or 11."""
+    mock_api.get_all_activities.return_value = [
+        {"id": 1, "start_date": "2023-04-01T09:00:00Z", "workout_type": 0},  # normal run
+        {"id": 2, "start_date": "2023-05-01T09:00:00Z", "workout_type": 1},  # run race
+        {"id": 3, "start_date": "2023-06-01T09:00:00Z", "workout_type": 11},  # ride race
+        {"id": 4, "start_date": "2023-07-01T09:00:00Z", "workout_type": None},  # unset
+    ]
+
+    imp = StravaImporter(mock_db, mock_api)
+    imp._rate_limiter = MagicMock()
+
+    count = imp.import_races()
+
+    assert count == 2
+    # Only the 2 race summaries should be inserted.
+    assert mock_db.insert_activity.call_count == 2
+    inserted_ids = {c.args[0]["activity_id"] for c in mock_db.insert_activity.call_args_list}
+    assert inserted_ids == {2, 3}
+
+
+def test_import_races_uses_all_time_fetch(mock_db, mock_api):
+    """import_races must fetch all activities (after=None) to find every race."""
+    mock_api.get_all_activities.return_value = []
+
+    imp = StravaImporter(mock_db, mock_api)
+    imp._rate_limiter = MagicMock()
+
+    imp.import_races()
+
+    after_arg = mock_api.get_all_activities.call_args.kwargs.get("after")
+    assert after_arg is None
+
+
+def test_import_races_no_races_found(mock_db, mock_api):
+    """import_races should return 0 and not call insert when no races exist."""
+    mock_api.get_all_activities.return_value = [
+        {"id": 1, "start_date": "2023-04-01T09:00:00Z", "workout_type": 0},
+    ]
+
+    imp = StravaImporter(mock_db, mock_api)
+    imp._rate_limiter = MagicMock()
+
+    count = imp.import_races()
+
+    assert count == 0
+    mock_db.insert_activity.assert_not_called()

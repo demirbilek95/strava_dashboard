@@ -1,5 +1,9 @@
-import streamlit as st
+from typing import Optional
+
 import pandas as pd
+import streamlit as st
+
+from strava.db.db_manager import DatabaseManager
 
 
 def _get_race_categories():
@@ -113,25 +117,49 @@ def _calculate_metrics(row, zones):
     }
 
 
-def page_races(df, zones):  # pylint: disable=too-many-branches
+def _render_fetch_races_button(database: DatabaseManager) -> bool:
+    """Render the 'Fetch all race history' button. Returns True if import ran."""
+    from strava.db.api_importer import StravaImporter  # pylint: disable=import-outside-toplevel
+    from strava.utils.strava_api import StravaAPI  # pylint: disable=import-outside-toplevel
+
+    if st.button("🏅 Fetch all race history from Strava", type="primary"):
+        try:
+            api = StravaAPI()
+            importer = StravaImporter(database, api)
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            def _cb(msg, pct):
+                status_text.text(msg)
+                progress_bar.progress(pct)
+
+            count = importer.import_races(progress_callback=_cb)
+            if count:
+                st.success(f"Imported {count} races. Reloading...")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.info("No race activities found in your Strava history.")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            st.error(f"Failed to fetch races: {exc}")
+        return True
+    return False
+
+
+def page_races(
+    df, zones, database: Optional[DatabaseManager] = None
+):  # pylint: disable=too-many-branches
     st.header("Race Analysis")
     st.caption("Detailed view of your races and top performances.")
 
-    # Warn users who may have a limited data window so they know how to fix it.
-    if not df.empty and "activity_date" in df.columns:
-        oldest = df["activity_date"].min()
-        oldest_naive = (
-            oldest.tz_localize(None) if oldest.tzinfo is None else oldest.tz_convert(None)
+    if database is not None:
+        st.markdown(
+            "Races are identified by the **Race** flag in Strava. "
+            "Use the button below to pull your complete race history regardless of the "
+            "current data range — only race streams are fetched, keeping API usage low."
         )
-        months_of_data = (pd.Timestamp.now() - oldest_naive).days / 30
-        if months_of_data < 11:
-            st.info(
-                f"You have **{int(months_of_data)} months** of activity data. "
-                "Race PRs from further back won't appear here. "
-                "Use **Refresh Data \u2192 Data range: Last year / All time** "
-                "in the sidebar to fetch your full history.",
-                icon="ℹ️",
-            )
+        _render_fetch_races_button(database)
+        st.divider()
 
     if "activity_type" in df.columns:
         df_runs = df[df["activity_type"] == "Run"].copy()

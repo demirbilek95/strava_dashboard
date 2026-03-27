@@ -262,7 +262,7 @@ def main():
     elif page == "AI Coach":
         page_ai_training_plan(dataframe, database)
     elif page == "Races":
-        page_races(dataframe, zones)
+        page_races(dataframe, zones, database)
 
 
 if __name__ == "__main__":

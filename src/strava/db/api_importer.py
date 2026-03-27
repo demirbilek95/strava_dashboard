@@ -164,6 +164,78 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
         _cb("Import complete!", 1.0)
         return total
 
+    def import_races(
+        self,
+        progress_callback: Optional[Callable[[str, float], None]] = None,
+    ) -> int:
+        """Import all-time race activities without fetching every stream.
+
+        Strategy:
+        1. Fetch **all** activity summaries via pagination (fast — one API
+           call per 200 activities, no streams).
+        2. Filter to activities flagged as races by Strava
+           (``workout_type == 1`` for run races, ``11`` for ride races).
+        3. Upsert those summaries into the DB.
+        4. Fetch streams only for race activities that don't already have
+           stream data, using the shared rate limiter.
+
+        This keeps API usage low even for large accounts: a 1 000-activity
+        history needs ~5 pagination calls; 30 races need ~60 more (streams +
+        detail). Total ≈ 65 calls — well within Strava's 200/15 min cap.
+
+        Args:
+            progress_callback: Function accepting (status_message, percent_complete).
+
+        Returns:
+            int: Number of race activities processed.
+        """
+        _cb = progress_callback or (lambda msg, pct: None)
+
+        _cb("Fetching all activity summaries to find races...", 0.0)
+        all_activities = self.api.get_all_activities(after=None)
+
+        # workout_type 1 = run race, 11 = ride race (Strava convention).
+        races = [a for a in all_activities if a.get("workout_type") in (1, 11)]
+
+        if not races:
+            _cb("No race activities found in your Strava history.", 1.0)
+            return 0
+
+        _cb(f"Found {len(races)} races. Saving summaries...", 0.1)
+        for activity in races:
+            self.db.insert_activity(self._map_activity(activity))
+
+        # ── Parallel stream + detail fetch for races ───────────────
+        results: List[Tuple[int, str, Dict, Optional[float]]] = []
+        completed_count = 0
+        total = len(races)
+
+        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+            future_to_activity = {
+                executor.submit(self._fetch_activity_data, act): act for act in races
+            }
+            for future in as_completed(future_to_activity):
+                completed_count += 1
+                pct = 0.1 + 0.85 * completed_count / total
+                _cb(f"Fetching race streams [rate-limited]: {completed_count}/{total}", pct)
+                try:
+                    result = future.result()
+                    if result:
+                        results.append(result)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    act = future_to_activity[future]
+                    print(f"Failed to fetch data for race {act['id']}: {exc}")
+
+        _cb("Saving race stream data...", 0.95)
+        for activity_id, start_date, streams, perceived_exertion in results:
+            if streams:
+                self._process_and_insert_streams(activity_id, start_date, streams)
+            if perceived_exertion is not None:
+                self._update_perceived_exertion(activity_id, perceived_exertion)
+
+        _cb("Race import complete!", 1.0)
+        return total
+
     # ── Private helpers ────────────────────────────────────────────
 
     def _fetch_activity_data(
