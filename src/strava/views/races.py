@@ -117,33 +117,33 @@ def _calculate_metrics(row, zones):
     }
 
 
-def _render_fetch_races_button(database: DatabaseManager) -> bool:
-    """Render the 'Fetch all race history' button. Returns True if import ran."""
+def _auto_fetch_races(database: DatabaseManager) -> None:
+    """Fetch all-time race history once per session, silently in the background."""
     from strava.db.api_importer import StravaImporter  # pylint: disable=import-outside-toplevel
     from strava.utils.strava_api import StravaAPI  # pylint: disable=import-outside-toplevel
 
-    if st.button("🏅 Fetch all race history from Strava", type="primary"):
-        try:
-            api = StravaAPI()
-            importer = StravaImporter(database, api)
-            progress_bar = st.progress(0)
-            status_text = st.empty()
+    # Mark as attempted immediately so a rerun() below doesn't re-trigger.
+    st.session_state["races_fetched"] = True
 
-            def _cb(msg, pct):
-                status_text.text(msg)
-                progress_bar.progress(pct)
+    try:
+        api = StravaAPI()
+        importer = StravaImporter(database, api)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
-            count = importer.import_races(progress_callback=_cb)
-            if count:
-                st.success(f"Imported {count} races. Reloading...")
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.info("No race activities found in your Strava history.")
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            st.error(f"Failed to fetch races: {exc}")
-        return True
-    return False
+        def _cb(msg, pct):
+            status_text.text(msg)
+            progress_bar.progress(pct)
+
+        count = importer.import_races(progress_callback=_cb)
+        if count:
+            st.cache_data.clear()
+            st.rerun()
+        else:
+            status_text.empty()
+            progress_bar.empty()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        st.warning(f"Could not load race history: {exc}")
 
 
 def page_races(
@@ -152,14 +152,8 @@ def page_races(
     st.header("Race Analysis")
     st.caption("Detailed view of your races and top performances.")
 
-    if database is not None:
-        st.markdown(
-            "Races are identified by the **Race** flag in Strava. "
-            "Use the button below to pull your complete race history regardless of the "
-            "current data range — only race streams are fetched, keeping API usage low."
-        )
-        _render_fetch_races_button(database)
-        st.divider()
+    if database is not None and "races_fetched" not in st.session_state:
+        _auto_fetch_races(database)
 
     if "activity_type" in df.columns:
         df_runs = df[df["activity_type"] == "Run"].copy()
