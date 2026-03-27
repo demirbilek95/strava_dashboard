@@ -1,7 +1,5 @@
 """Tests for AICoach pace helpers, km splits, and plan parsing."""
 
-import pytest
-
 from strava.utils.ai_coach import (
     AICoach,
     _fmt_pace,

@@ -82,9 +82,12 @@ def test_import_fresh_db_default_3_months(mock_db, mock_api):
 
         imp.import_all_data()
 
-    after_arg = mock_api.get_all_activities.call_args[1].get(
-        "after"
-    ) or mock_api.get_all_activities.call_args[0][0] if mock_api.get_all_activities.call_args[0] else mock_api.get_all_activities.call_args[1].get("after")
+    after_arg = (
+        mock_api.get_all_activities.call_args[1].get("after")
+        or mock_api.get_all_activities.call_args[0][0]
+        if mock_api.get_all_activities.call_args[0]
+        else mock_api.get_all_activities.call_args[1].get("after")
+    )
     # The call is `get_all_activities(after=fetch_after)` — use kwargs.
     after_arg = mock_api.get_all_activities.call_args.kwargs.get("after")
     expected = now - 3 * 30 * 24 * 60 * 60

@@ -35,9 +35,7 @@ def handle_authorization(api: StravaAPI, auth_code: str):
             status_text.text(msg)
             progress_bar.progress(percent)
 
-        with st.spinner(
-            "Importing last 3 months of data from Strava… Rate-limited for safety."
-        ):
+        with st.spinner("Importing last 3 months of data from Strava… Rate-limited for safety."):
             importer.import_all_data(progress_callback=update_progress, lookback_months=3)
 
         st.success("Import complete! Loading dashboard...")
