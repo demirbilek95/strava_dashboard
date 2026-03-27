@@ -120,7 +120,10 @@ def page_races(df, zones):
     # Warn users who may have a limited data window so they know how to fix it.
     if not df.empty and "activity_date" in df.columns:
         oldest = df["activity_date"].min()
-        months_of_data = (pd.Timestamp.now() - oldest).days / 30
+        oldest_naive = (
+            oldest.tz_localize(None) if oldest.tzinfo is None else oldest.tz_convert(None)
+        )
+        months_of_data = (pd.Timestamp.now() - oldest_naive).days / 30
         if months_of_data < 11:
             st.info(
                 f"You have **{int(months_of_data)} months** of activity data. "
