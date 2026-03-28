@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from strava.constants import ZONE_COLORS, ZONE_ORDER, classify_zone
+from strava.constants import ACTIVITY_TYPE_COLORS, ZONE_COLORS, ZONE_ORDER, classify_zone
 
 
 def _filter_by_date(df, start_date):
@@ -68,6 +68,7 @@ def _plot_weekly_duration(filtered_df):
         x="Week",
         y="Duration Minutes",
         color="activity_type",
+        color_discrete_map=ACTIVITY_TYPE_COLORS,
         title="Weekly Duration by Sport Type (Minutes)",
         labels={
             "Duration Minutes": "Duration (min)",

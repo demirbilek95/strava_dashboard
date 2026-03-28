@@ -73,6 +73,55 @@ INTERVAL_MIN_HARD_ZONE_PCT = 0.10
 # Ordered list of zone colors matching ZONE_ORDER
 ZONE_COLORS_LIST = [ZONE_COLORS[z] for z in ZONE_ORDER]
 
+# ── Strava Activity Type Colours ───────────────────────────────────────
+# Fixed mapping so colors never shift when the date range changes.
+# Unknown types fall back to ACTIVITY_TYPE_DEFAULT_COLOR.
+
+ACTIVITY_TYPE_COLORS: Dict[str, str] = {
+    # ── Running ──────────────────────────────────────────────────────
+    "Run": "#FC4C02",  # Strava orange-red
+    "TrailRun": "#D35400",  # Burnt orange – off-road variant
+    "VirtualRun": "#F0B27A",  # Light orange – treadmill / indoor
+    # ── Cycling ──────────────────────────────────────────────────────
+    "Ride": "#4E8EF7",  # Bright blue
+    "VirtualRide": "#85C1E9",  # Light blue – indoor / Zwift
+    "MountainBikeRide": "#1F618D",  # Dark blue – MTB
+    "GravelRide": "#5DADE2",  # Sky blue – gravel
+    "EBikeRide": "#AED6F1",  # Pale blue – e-bike
+    # ── Walking & Hiking ─────────────────────────────────────────────
+    "Walk": "#2ECC71",  # Green
+    "Hike": "#27AE60",  # Dark green
+    # ── Water sports ─────────────────────────────────────────────────
+    "Swim": "#1ABC9C",  # Teal
+    "Rowing": "#2980B9",  # Medium blue
+    "Kayaking": "#16A085",  # Dark teal
+    "StandUpPaddling": "#148F77",  # Deep teal
+    "Surfing": "#117A65",  # Ocean green
+    # ── Winter sports ────────────────────────────────────────────────
+    "AlpineSki": "#A9CCE3",  # Icy light blue
+    "BackcountrySki": "#7FB3D3",
+    "NordicSki": "#5DADE2",
+    "Snowboard": "#2471A3",
+    "IceSkate": "#D6EAF8",
+    # ── Gym & fitness ────────────────────────────────────────────────
+    "WeightTraining": "#E74C3C",  # Red
+    "Workout": "#C0392B",  # Dark red
+    "Yoga": "#9B59B6",  # Purple
+    "Pilates": "#8E44AD",  # Dark purple
+    "CrossFit": "#E67E22",  # Orange
+    "Elliptical": "#F39C12",  # Amber
+    "StairStepper": "#D68910",  # Gold
+    # ── Other ────────────────────────────────────────────────────────
+    "RockClimbing": "#A04000",  # Earthy brown
+    "Golf": "#52BE80",  # Soft green
+    "Soccer": "#58D68D",  # Bright green
+    "Tennis": "#ABEBC6",  # Light green
+    "InlineSkate": "#F8C471",  # Light amber
+    "Skateboard": "#FAD7A0",
+}
+
+ACTIVITY_TYPE_DEFAULT_COLOR = "#95A5A6"  # Grey – fallback for unknown types
+
 
 def classify_zone(hr: float, zones: tuple) -> str:
     """Classify a heart rate value into a zone string (Z1–Z5)."""
