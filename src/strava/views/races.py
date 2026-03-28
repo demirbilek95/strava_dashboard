@@ -1,5 +1,10 @@
-import streamlit as st
+import time
+from typing import Optional
+
 import pandas as pd
+import streamlit as st
+
+from strava.db.db_manager import DatabaseManager
 
 
 def _get_race_categories():
@@ -113,9 +118,45 @@ def _calculate_metrics(row, zones):
     }
 
 
-def page_races(df, zones):
+_RACES_IMPORTED_KEY = "races_imported_at"
+
+
+def _auto_fetch_races(database: DatabaseManager) -> None:
+    """Fetch all-time race history once (persisted in DB), not every session."""
+    from strava.db.api_importer import StravaImporter  # pylint: disable=import-outside-toplevel
+    from strava.utils.strava_api import StravaAPI  # pylint: disable=import-outside-toplevel
+
+    try:
+        api = StravaAPI()
+        importer = StravaImporter(database, api)
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        def _cb(msg, pct):
+            status_text.text(msg)
+            progress_bar.progress(pct)
+
+        count = importer.import_races(progress_callback=_cb)
+        # Persist the flag regardless of count — even "no races" means we ran.
+        database.set_setting(_RACES_IMPORTED_KEY, str(int(time.time())))
+        if count:
+            st.cache_data.clear()
+            st.rerun()
+        else:
+            status_text.empty()
+            progress_bar.empty()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        st.warning(f"Could not load race history: {exc}")
+
+
+def page_races(
+    df, zones, database: Optional[DatabaseManager] = None
+):  # pylint: disable=too-many-branches
     st.header("Race Analysis")
     st.caption("Detailed view of your races and top performances.")
+
+    if database is not None and database.get_setting(_RACES_IMPORTED_KEY) is None:
+        _auto_fetch_races(database)
 
     if "activity_type" in df.columns:
         df_runs = df[df["activity_type"] == "Run"].copy()

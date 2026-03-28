@@ -1,4 +1,4 @@
-from datetime import timedelta
+from typing import Optional
 
 import streamlit as st
 import pandas as pd
@@ -7,9 +7,7 @@ from strava.utils.activity_processing import calculate_per_km_hr_data
 from strava.constants import ZONE_COLORS
 
 
-def _filter_and_setup(df):
-    st.sidebar.markdown("### Analysis Options")
-
+def _filter_and_setup(df, start_date=None) -> Optional[pd.DataFrame]:
     if "activity_type" in df.columns:
         df_run = df[(~df["commute"]) & (df["activity_type"] == "Run")].copy()
     else:
@@ -19,24 +17,12 @@ def _filter_and_setup(df):
         st.warning("No running activities found.")
         return None
 
-    min_date = df_run["activity_date"].min().date()
     max_date = df_run["activity_date"].max().date()
-    default_start = max_date - timedelta(weeks=4)
-
-    start_date = st.sidebar.date_input(
-        "Start Date", value=default_start, min_value=min_date, max_value=max_date, key="det_start"
+    effective_start = start_date if start_date is not None else df_run["activity_date"].min().date()
+    mask = (df_run["activity_date"].dt.date >= effective_start) & (
+        df_run["activity_date"].dt.date <= max_date
     )
-    end_date = st.sidebar.date_input(
-        "End Date", value=max_date, min_value=min_date, max_value=max_date, key="det_end"
-    )
-
-    mask = (df_run["activity_date"].dt.date >= start_date) & (
-        df_run["activity_date"].dt.date <= end_date
-    )
-    filtered_df = df_run.loc[mask].copy()
-
-    st.caption(f"Showing Run data from {start_date} to {end_date}")
-    return filtered_df
+    return df_run.loc[mask].copy()
 
 
 def _calculate_metrics(filtered_df):
@@ -299,10 +285,10 @@ def _plot_zone_distribution(filtered_df, zones):
         st.info("No data in zones")
 
 
-def page_activity_run_details(df, zones):
+def page_activity_run_details(df, zones, start_date=None):
     st.header("Activity Run Details")
 
-    filtered_df = _filter_and_setup(df)
+    filtered_df = _filter_and_setup(df, start_date)
     if filtered_df is None:
         return
 

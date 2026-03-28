@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any
 import pandas as pd
 
 
-class DatabaseManager:
+class DatabaseManager:  # pylint: disable=too-many-public-methods
     """Manages SQLite database connections and operations for Strava data."""
 
     def __init__(self, db_path: Optional[str] = None):
@@ -108,6 +108,12 @@ class DatabaseManager:
                         conn.execute(f"ALTER TABLE activities ADD COLUMN {col_name} {col_def}")
                         print(f"✓ Added {col_name} column to activities table")
 
+                # Ensure the settings table exists (added after initial schema).
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS settings "
+                    "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
+
         except Exception as exc:  # pylint: disable=broad-exception-caught
             print(f"! Migration check failed: {exc}")
 
@@ -183,6 +189,20 @@ class DatabaseManager:
         """Get total number of activities."""
         result = self.execute_query("SELECT COUNT(*) as count FROM activities")
         return result[0]["count"] if result else 0
+
+    def get_setting(self, key: str) -> Optional[str]:
+        """Return the value for *key* from the settings table, or None."""
+        result = self.execute_query("SELECT value FROM settings WHERE key = ?", (key,))
+        return result[0]["value"] if result else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Upsert *key* / *value* in the settings table."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
 
     def get_activities_with_streams_count(self) -> int:
         """Get number of activities that have stream data."""

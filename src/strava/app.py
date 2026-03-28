@@ -1,3 +1,5 @@
+import datetime
+
 import streamlit as st
 from strava.data import load_data
 from strava.db.db_manager import DatabaseManager
@@ -35,11 +37,8 @@ def handle_authorization(api: StravaAPI, auth_code: str):
             status_text.text(msg)
             progress_bar.progress(percent)
 
-        with st.spinner(
-            "Importing data from Strava… "
-            "Streams are fetched in parallel — this is much faster now!"
-        ):
-            importer.import_all_data(progress_callback=update_progress)
+        with st.spinner("Importing last 3 months of data from Strava… Rate-limited for safety."):
+            importer.import_all_data(progress_callback=update_progress, lookback_months=3)
 
         st.success("Import complete! Loading dashboard...")
         st.cache_data.clear()
@@ -98,8 +97,8 @@ def show_welcome_page():
                     <div style="font-size:2.5rem;">📊</div>
                     <h3 style="margin:0.5rem 0 0.25rem">Step 2</h3>
                     <p style="color:#bbb; font-size:0.9rem; margin:0">
-                        Your activities are imported automatically — streams are
-                        fetched in parallel so it won't take long!
+                        Your last 3 months of activities are imported automatically.
+                        Fetch more data (up to all time) via the sidebar after connecting.
                     </p>
                 </div>
                 """,
@@ -137,40 +136,35 @@ def show_welcome_page():
                 handle_authorization(api, auth_code)
 
 
-def handle_refresh(database: DatabaseManager):
-    """Handle the sidebar refresh logic."""
-    if st.sidebar.button("🔄 Refresh Data from Strava"):
-        try:
-            api = StravaAPI()
-            importer = StravaImporter(database, api)
+_PERIOD_OPTIONS = {
+    "Last month": 30,
+    "Last 3 months": 90,
+    "Last 6 months": 180,
+    "Last year": 365,
+    "All time": None,
+}
 
-            progress_bar = st.sidebar.progress(0)
-            status_text = st.sidebar.empty()
+# Session-state key for the global period selector.
+# Cleared on sync so the selector resets after new data arrives.
+_DATE_FILTER_KEYS = ("period",)
 
-            def update_progress(msg, percent):
-                status_text.text(msg)
-                progress_bar.progress(percent)
 
-            with st.spinner("Refreshing data..."):
-                count = importer.import_all_data(progress_callback=update_progress)
-
-            if count > 0:
-                st.sidebar.success(f"Successfully imported {count} new activities!")
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.sidebar.info("Data is already up to date.")
-                if st.sidebar.button("🧹 Clear App Cache"):
-                    st.cache_data.clear()
-                    st.rerun()
-
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            st.sidebar.error(f"Update failed: {exc}")
-            if "401" in str(exc) or "missing" in str(exc).lower():
-                st.sidebar.warning("Permissions might be missing or expired.")
-                if st.sidebar.button("🔑 Re-authorize Strava"):
-                    st.session_state["force_reauth"] = True
-                    st.rerun()
+def auto_sync(database: DatabaseManager) -> None:
+    """Incrementally sync new activities once per session on page load."""
+    st.session_state["auto_synced"] = True
+    try:
+        api = StravaAPI()
+        importer = StravaImporter(database, api)
+        with st.spinner("Checking for new activities..."):
+            count = importer.import_all_data()
+        if count:
+            # Drop stale date-filter state so plots pick up fresh defaults.
+            for key in _DATE_FILTER_KEYS:
+                st.session_state.pop(key, None)
+            st.cache_data.clear()
+            st.rerun()
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass  # Silent failure — don't interrupt the dashboard
 
 
 def main():
@@ -204,6 +198,10 @@ def main():
         show_welcome_page()
         return
 
+    # ── Auto-sync new activities once per session ──────────────────
+    if "auto_synced" not in st.session_state:
+        auto_sync(database)
+
     # ── Main dashboard ─────────────────────────────────────────────
     st.title("🏃 Strava Activity Analytics")
 
@@ -221,7 +219,19 @@ def main():
 
     page = st.sidebar.radio("Go to", page_options, key="active_page")
 
-    handle_refresh(database)
+    # ── Period selector (above HR zones) ───────────────────────────
+    st.sidebar.markdown("---")
+    selected_period = st.sidebar.selectbox(
+        "Period",
+        list(_PERIOD_OPTIONS.keys()),
+        index=1,  # default: Last 3 months
+        key="period",
+    )
+    days = _PERIOD_OPTIONS[selected_period]
+
+    start_date = (
+        (datetime.date.today() - datetime.timedelta(days=days)) if days is not None else None
+    )
 
     # Global Zone Settings
     st.sidebar.markdown("---")
@@ -234,15 +244,15 @@ def main():
     zones = [z1, z2, z3, z4]
 
     if page == "General Overview":
-        page_general(dataframe, zones)
+        page_general(dataframe, zones, start_date)
     elif page == "Activity Run Details":
-        page_activity_run_details(dataframe, zones)
+        page_activity_run_details(dataframe, zones, start_date)
     elif page == "Deep Dive":
         page_recent_activities(dataframe, zones)
     elif page == "AI Coach":
         page_ai_training_plan(dataframe, database)
     elif page == "Races":
-        page_races(dataframe, zones)
+        page_races(dataframe, zones, database)
 
 
 if __name__ == "__main__":

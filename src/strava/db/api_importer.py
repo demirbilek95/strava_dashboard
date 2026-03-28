@@ -1,6 +1,8 @@
 """Strava API data importer with parallel stream fetching."""
 
+import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, Callable, List, Optional, Tuple
 
@@ -10,8 +12,45 @@ from strava.db.db_manager import DatabaseManager
 from strava.utils.strava_api import StravaAPI
 
 # Max parallel workers for API requests.
-# Strava rate-limit: 100 req/15 min -> reduce to 3 workers with moderate throttling.
 _MAX_WORKERS = 3
+
+# Conservative rate limit: 150 requests per 15 min, well below Strava's 200/15 min cap.
+# The remaining budget is reserved for activity-list pagination calls.
+_RATE_LIMIT_CALLS = 150
+_RATE_LIMIT_PERIOD = 900  # 15 minutes in seconds
+
+# Default lookback when the database is empty (first-time import).
+_DEFAULT_LOOKBACK_MONTHS = 3
+
+
+class _RateLimiter:  # pylint: disable=too-few-public-methods
+    """Sliding-window rate limiter shared across worker threads.
+
+    Tracks timestamps of recent API calls within a rolling window and blocks
+    callers until a slot is available, preventing bursts that exceed the limit.
+    """
+
+    def __init__(self, max_calls: int, period_seconds: float) -> None:
+        self._max = max_calls
+        self._period = period_seconds
+        self._timestamps: deque = deque()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        """Block until a request slot becomes available."""
+        while True:
+            with self._lock:
+                now = time.time()
+                cutoff = now - self._period
+                # Prune expired timestamps from the left end.
+                while self._timestamps and self._timestamps[0] < cutoff:
+                    self._timestamps.popleft()
+                if len(self._timestamps) < self._max:
+                    self._timestamps.append(now)
+                    return
+                # Sleep until the oldest call exits the window.
+                sleep_for = self._timestamps[0] + self._period - now + 0.05
+            time.sleep(max(0.0, sleep_for))
 
 
 class StravaImporter:  # pylint: disable=too-few-public-methods
@@ -20,31 +59,56 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
     def __init__(self, db_manager: DatabaseManager, api_client: StravaAPI):
         self.db = db_manager
         self.api = api_client
+        self._rate_limiter = _RateLimiter(_RATE_LIMIT_CALLS, _RATE_LIMIT_PERIOD)
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def import_all_data(
-        self, progress_callback: Optional[Callable[[str, float], None]] = None
+    def import_all_data(  # pylint: disable=too-many-branches
+        self,
+        progress_callback: Optional[Callable[[str, float], None]] = None,
+        lookback_months: Optional[int] = _DEFAULT_LOOKBACK_MONTHS,
     ) -> int:
-        """Import all activities and streams from Strava API.
+        """Import activities and streams from Strava API.
 
-        Uses a ThreadPoolExecutor to parallelise stream + detail fetches,
-        then inserts results sequentially to avoid SQLite write conflicts.
+        On a fresh database, only fetches the last *lookback_months* months to
+        avoid exhausting Strava's rate limits on large accounts.  Pass
+        ``lookback_months=None`` to fetch the full history.  When the database
+        already contains activities the import is always incremental (new
+        activities only), regardless of *lookback_months*.
+
+        Uses a ThreadPoolExecutor to parallelise stream + detail fetches, then
+        inserts results sequentially to avoid SQLite write conflicts.
 
         Args:
-            progress_callback: Function accepting (status_message, percent_complete)
+            progress_callback: Function accepting (status_message, percent_complete).
+            lookback_months: How many months back to fetch on a fresh DB.
+                             ``None`` fetches all-time history.
 
         Returns:
             int: Number of activities imported.
         """
         _cb = progress_callback or (lambda msg, pct: None)
 
-        _cb("Checking for new activities...", 0.0)
         db_latest = self.db.get_latest_activity_timestamp()
 
-        # If DB is empty, default to the last 1 year to avoid massive rate limits
-        one_year_ago = int(time.time() - (365 * 24 * 60 * 60))
-        fetch_after = db_latest if db_latest is not None else one_year_ago
+        # Determine the ``after`` timestamp for the API call.
+        #
+        # When the DB already has activities we still respect the user's chosen
+        # range: if `lookback_cutoff` is *earlier* than `db_latest`, the user
+        # is asking for historical data we haven't fetched yet, so we use the
+        # lookback cutoff.  If `db_latest` is the earlier value (DB already
+        # covers the full window) we fall back to pure incremental sync.
+        if lookback_months is not None:
+            seconds_back = int(lookback_months * 30 * 24 * 60 * 60)
+            lookback_cutoff = int(time.time() - seconds_back)
+            if db_latest is not None:
+                fetch_after: Optional[int] = min(db_latest, lookback_cutoff)
+            else:
+                fetch_after = lookback_cutoff
+            _cb(f"Fetching last {lookback_months} months of activities...", 0.0)
+        else:
+            fetch_after = None  # All-time history
+            _cb("Fetching full activity history (this may take a while)...", 0.0)
 
         # ── Phase 1: Fetch activity summaries (fast, paginated) ────
         activities = self.api.get_all_activities(after=fetch_after)
@@ -55,16 +119,17 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
             _cb(status, 1.0)
             return 0
 
-        label = "new " if db_latest else ""
-        _cb(f"Found {total} {label}activities. Fetching details in parallel...", 0.05)
+        _cb(f"Found {total} activities. Saving summaries...", 0.05)
 
-        # ── Phase 2: Insert activity summaries (lightweight, sequential) ──
+        # ── Phase 2: Insert activity summaries; track truly new ones ──
+        count_before = self.db.get_activity_count()
         for activity in activities:
             self.db.insert_activity(self._map_activity(activity))
+        new_count = self.db.get_activity_count() - count_before
 
         _cb(f"Saved {total} activity summaries. Fetching streams & detail...", 0.15)
 
-        # ── Phase 3: Parallel stream + detail fetch ────────────────
+        # ── Phase 3: Parallel stream + detail fetch (rate-limited) ─
         results: List[Tuple[int, str, Dict, Optional[float]]] = []
         completed_count = 0
 
@@ -76,7 +141,10 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
             for future in as_completed(future_to_activity):
                 completed_count += 1
                 pct = 0.15 + (0.80 * completed_count / total)
-                _cb(f"Fetched streams: {completed_count}/{total}", pct)
+                _cb(
+                    f"Fetching streams & detail [rate-limited]: {completed_count}/{total}",
+                    pct,
+                )
 
                 try:
                     result = future.result()
@@ -94,7 +162,83 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
             if perceived_exertion is not None:
                 self._update_perceived_exertion(activity_id, perceived_exertion)
 
-        _cb("Import complete!", 1.0)
+        if new_count:
+            noun = "activity" if new_count == 1 else "activities"
+            _cb(f"Import complete! {new_count} new {noun} added.", 1.0)
+        else:
+            _cb("Already up to date — no new activities found.", 1.0)
+        return new_count
+
+    def import_races(
+        self,
+        progress_callback: Optional[Callable[[str, float], None]] = None,
+    ) -> int:
+        """Import all-time race activities without fetching every stream.
+
+        Strategy:
+        1. Fetch **all** activity summaries via pagination (fast — one API
+           call per 200 activities, no streams).
+        2. Filter to activities flagged as races by Strava
+           (``workout_type == 1`` for run races, ``11`` for ride races).
+        3. Upsert those summaries into the DB.
+        4. Fetch streams only for race activities that don't already have
+           stream data, using the shared rate limiter.
+
+        This keeps API usage low even for large accounts: a 1 000-activity
+        history needs ~5 pagination calls; 30 races need ~60 more (streams +
+        detail). Total ≈ 65 calls — well within Strava's 200/15 min cap.
+
+        Args:
+            progress_callback: Function accepting (status_message, percent_complete).
+
+        Returns:
+            int: Number of race activities processed.
+        """
+        _cb = progress_callback or (lambda msg, pct: None)
+
+        _cb("Fetching all activity summaries to find races...", 0.0)
+        all_activities = self.api.get_all_activities(after=None)
+
+        # workout_type 1 = run race, 11 = ride race (Strava convention).
+        races = [a for a in all_activities if a.get("workout_type") in (1, 11)]
+
+        if not races:
+            _cb("No race activities found in your Strava history.", 1.0)
+            return 0
+
+        _cb(f"Found {len(races)} races. Saving summaries...", 0.1)
+        for activity in races:
+            self.db.insert_activity(self._map_activity(activity))
+
+        # ── Parallel stream + detail fetch for races ───────────────
+        results: List[Tuple[int, str, Dict, Optional[float]]] = []
+        completed_count = 0
+        total = len(races)
+
+        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as executor:
+            future_to_activity = {
+                executor.submit(self._fetch_activity_data, act): act for act in races
+            }
+            for future in as_completed(future_to_activity):
+                completed_count += 1
+                pct = 0.1 + 0.85 * completed_count / total
+                _cb(f"Fetching race streams [rate-limited]: {completed_count}/{total}", pct)
+                try:
+                    result = future.result()
+                    if result:
+                        results.append(result)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    act = future_to_activity[future]
+                    print(f"Failed to fetch data for race {act['id']}: {exc}")
+
+        _cb("Saving race stream data...", 0.95)
+        for activity_id, start_date, streams, perceived_exertion in results:
+            if streams:
+                self._process_and_insert_streams(activity_id, start_date, streams)
+            if perceived_exertion is not None:
+                self._update_perceived_exertion(activity_id, perceived_exertion)
+
+        _cb("Race import complete!", 1.0)
         return total
 
     # ── Private helpers ────────────────────────────────────────────
@@ -104,23 +248,30 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
     ) -> Optional[Tuple[int, str, Dict, Optional[float]]]:
         """Fetch streams + optional detail for one activity.
 
+        Each API call is gated by the shared rate limiter to stay within
+        Strava's 200 requests/15 min cap.
+
         Returns:
             (activity_id, start_date_str, streams_dict, perceived_exertion_or_None)
         """
         activity_id = activity["id"]
         start_date = activity["start_date"]
 
-        # Small sleep to stay well within Strava rate limits and avoid burst 429s
-        time.sleep(0.5)
+        # Skip if the activity already has complete stream data in the DB —
+        # avoids redundant API calls when backfilling historical activities.
+        if self.db.activity_has_streams(activity_id):
+            return None
 
         streams = {}
         try:
+            self._rate_limiter.acquire()
             streams = self.api.get_activity_streams(activity_id) or {}
         except Exception as exc:  # pylint: disable=broad-exception-caught
             print(f"Stream fetch failed for {activity_id}: {exc}")
 
         perceived_exertion = None
         try:
+            self._rate_limiter.acquire()
             detail = self.api.get_activity_detail(activity_id)
             perceived_exertion = detail.get("perceived_exertion")
         except Exception as exc:  # pylint: disable=broad-exception-caught
