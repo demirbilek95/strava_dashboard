@@ -1007,7 +1007,7 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
                 )
                 for part in function_calls
             ]
-            response = chat_session.send_message(types.Content(parts=tool_responses))
+            response = chat_session.send_message(tool_responses)
 
         # Fallback if max iterations reached
         if (
