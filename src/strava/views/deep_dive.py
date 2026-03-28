@@ -445,7 +445,7 @@ def _build_color_setup(color_by, gps_df, zones):
             f'<div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px 0;">'
             f'<span style="font-size:0.82em;white-space:nowrap;">Fast ({fmt_pace(p_min)}/km)</span>'
             f'<div style="flex:1;height:12px;border-radius:6px;'
-            f'background:linear-gradient(to right,#00cc44,#cc2200);"></div>'
+            f'background:linear-gradient(to right,#B8E0B8,#F4A0A0);"></div>'
             f'<span style="font-size:0.82em;white-space:nowrap;">Slow ({fmt_pace(p_max)}/km)</span>'
             f"</div>",
             unsafe_allow_html=True,
@@ -455,7 +455,7 @@ def _build_color_setup(color_by, gps_df, zones):
             if pd.isna(val) or val <= 0:
                 return "#808080"
             t = (val - p_min) / (p_max - p_min) if p_max > p_min else 0.5
-            return _hex_gradient(t, "#00cc44", "#cc2200")
+            return _hex_gradient(t, "#B8E0B8", "#F4A0A0")
 
         return "Pace_Decimal", _pace_color
 
@@ -466,7 +466,7 @@ def _build_color_setup(color_by, gps_df, zones):
             f'<div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px 0;">'
             f'<span style="font-size:0.82em;white-space:nowrap;">Low ({e_min:.0f} m)</span>'
             f'<div style="flex:1;height:12px;border-radius:6px;'
-            f'background:linear-gradient(to right,#4488ff,#ff4400);"></div>'
+            f'background:linear-gradient(to right,#88B4E7,#F4A0A0);"></div>'
             f'<span style="font-size:0.82em;white-space:nowrap;">High ({e_max:.0f} m)</span>'
             f"</div>",
             unsafe_allow_html=True,
@@ -476,7 +476,7 @@ def _build_color_setup(color_by, gps_df, zones):
             if pd.isna(val):
                 return "#808080"
             t = (val - e_min) / (e_max - e_min) if e_max > e_min else 0.5
-            return _hex_gradient(t, "#4488ff", "#ff4400")
+            return _hex_gradient(t, "#88B4E7", "#F4A0A0")
 
         return "Altitude", _elev_color
 
