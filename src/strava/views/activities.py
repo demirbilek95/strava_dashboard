@@ -9,7 +9,7 @@ from strava.constants import ZONE_COLORS, ZONE_COLORS_LIST, ZONE_ORDER, classify
 
 def _filter_and_setup(df, start_date=None) -> Optional[pd.DataFrame]:
     if "activity_type" in df.columns:
-        df_run = df[(~df["commute"]) & (df["activity_type"] == "Run")].copy()
+        df_run = df[(df["activity_type"] == "Run")].copy()
     else:
         df_run = df[~df["commute"]].copy()
 
@@ -124,6 +124,7 @@ def _plot_distance(filtered_df):
         labels={"distance": "Distance (km)", "Week": "Week Starting"},
         text="distance",
         text_auto=".3s",
+        color_discrete_sequence=["#88B4E7"],
     )
     fig_dist.update_layout(xaxis={"type": "category"})
     st.plotly_chart(fig_dist)
@@ -155,6 +156,15 @@ def _plot_scatter(filtered_df, zones):
     short_date = km_data["activity_date"].dt.strftime("%b %d")
     km_data["display_name"] = km_data["activity_name"] + " (" + short_date + ")"
 
+    # Stable color mapping: derive color from activity_id so it never shifts
+    # when the period changes and different activities appear.
+    _PALETTE = px.colors.qualitative.Plotly
+    unique_ids = sorted(km_data["activity_id"].unique())
+    id_to_name = (
+        km_data.drop_duplicates("activity_id").set_index("activity_id")["display_name"].to_dict()
+    )
+    color_map = {id_to_name[aid]: _PALETTE[int(aid) % len(_PALETTE)] for aid in unique_ids}
+
     # Create hover template
     hover_cols = ["activity_name", "activity_date_str", "km_segment"]
 
@@ -163,6 +173,7 @@ def _plot_scatter(filtered_df, zones):
         x="avg_pace",
         y="avg_hr",
         color="display_name",
+        color_discrete_map=color_map,
         hover_data=hover_cols,
         title="Heart Rate vs Pace (Per Kilometer) with Zones",
         labels={
@@ -173,7 +184,8 @@ def _plot_scatter(filtered_df, zones):
             "activity_date_str": "Date",
             "km_segment": "Kilometer",
         },
-        range_y=[90, 210],
+        range_y=[100, 220],
+        range_x=[2.5, 10.0],
     )
 
     # Add HR zone backgrounds

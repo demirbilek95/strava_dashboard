@@ -71,40 +71,30 @@ def _calculate_splits(track_df):
         start_dist = current_km * 1000
         end_dist = (current_km + 1) * 1000
 
-        # Get data for this exact 1km segment
-        if end_dist <= max_dist:
-            # Full 1km split
-            split_data = track_df[
-                (track_df["Distance"] >= start_dist) & (track_df["Distance"] < end_dist)
-            ].copy()
+        split_data = track_df[
+            (track_df["Distance"] >= start_dist) & (track_df["Distance"] < end_dist)
+        ].copy()
 
-            if not split_data.empty:
-                # Calculate actual distance covered
-                actual_dist_m = split_data["Distance"].iloc[-1] - split_data["Distance"].iloc[0]
-                actual_dist_km = actual_dist_m / 1000
+        if not split_data.empty:
+            actual_dist_m = split_data["Distance"].iloc[-1] - split_data["Distance"].iloc[0]
+            actual_dist_km = actual_dist_m / 1000
 
-                # Use elapsed time (to match device laps behavior)
-                # Device laps use total_timer_time or total_elapsed_time, not moving time
-                elapsed_time_s = (
-                    split_data["Time"].iloc[-1] - split_data["Time"].iloc[0]
-                ).total_seconds()
+            # Use moving time to match Strava's pace calculation
+            moving_time_s = split_data[split_data["Is_Moving"]]["Time_Diff"].sum()
+            pace = (moving_time_s / actual_dist_km) / 60 if actual_dist_km > 0 else 0
 
-                # Pace calculation (same as laps: (time_seconds / distance_km) / 60 = min/km)
-                pace = (elapsed_time_s / actual_dist_km) / 60 if actual_dist_km > 0 else 0
-                avg_hr = split_data["HR"].mean()
-                avg_cadence = (
-                    split_data["cadence"].mean() if "cadence" in split_data.columns else None
-                )
+            avg_hr = split_data["HR"].mean()
+            avg_cadence = split_data["cadence"].mean() if "cadence" in split_data.columns else None
 
-                splits.append(
-                    {
-                        "KM": current_km + 1,
-                        "Distance": actual_dist_km,
-                        "Pace": pace,
-                        "Avg HR": avg_hr,
-                        "Cadence": avg_cadence,
-                    }
-                )
+            splits.append(
+                {
+                    "KM": current_km + 1,
+                    "Distance": actual_dist_km,
+                    "Pace": pace,
+                    "Avg HR": avg_hr,
+                    "Cadence": avg_cadence,
+                }
+            )
 
         current_km += 1
 

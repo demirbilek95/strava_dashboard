@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from strava.constants import ZONE_COLORS, ZONE_ORDER, classify_zone
+from strava.constants import ACTIVITY_TYPE_COLORS, ZONE_COLORS, ZONE_ORDER, classify_zone
 
 
 def _filter_by_date(df, start_date):
@@ -68,6 +68,7 @@ def _plot_weekly_duration(filtered_df):
         x="Week",
         y="Duration Minutes",
         color="activity_type",
+        color_discrete_map=ACTIVITY_TYPE_COLORS,
         title="Weekly Duration by Sport Type (Minutes)",
         labels={
             "Duration Minutes": "Duration (min)",
@@ -89,7 +90,12 @@ def _plot_distribution(filtered_df, zones):
             activity_counts.columns = ["Activity Type", "Count"]
 
             fig_pie = px.pie(
-                activity_counts, values="Count", names="Activity Type", title="Activities by Type"
+                activity_counts,
+                values="Count",
+                names="Activity Type",
+                title="Activities by Type",
+                color="Activity Type",
+                color_discrete_map=ACTIVITY_TYPE_COLORS,
             )
             st.plotly_chart(fig_pie)
 
@@ -160,6 +166,7 @@ def _plot_relative_score(filtered_df):
         title="Weekly Total Relative Score (Training Load)",
         labels={"Week": "Week Starting", "suffer_score": "Total Relative Score"},
         text="suffer_score",
+        color_discrete_sequence=["#88B4E7"],
     )
     fig.update_layout(xaxis={"type": "category"})
     st.plotly_chart(fig)

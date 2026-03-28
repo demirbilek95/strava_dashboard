@@ -5,7 +5,16 @@ import pandas as pd
 
 # Mock streamlit before importing strava.data to disable caching and UI errors
 mock_st = MagicMock()
-mock_st.cache_data = lambda func: func
+
+
+def _cache_data(func=None, **_kwargs):
+    """Support both @st.cache_data and @st.cache_data(ttl=...)."""
+    if func is not None:
+        return func
+    return lambda f: f
+
+
+mock_st.cache_data = _cache_data
 sys.modules["streamlit"] = mock_st
 
 # pylint: disable=redefined-outer-name, unused-argument, wrong-import-position
