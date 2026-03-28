@@ -92,7 +92,7 @@ def _render_plots(track_df, zones):
             x=pace_df["Elapsed Seconds"],
             y=pace_df["Pace_Decimal"],
             name="Pace",
-            line={"color": "blue"},
+            line={"color": "#88B4E7"},
         ),
         row=1,
         col=1,
@@ -107,9 +107,9 @@ def _render_plots(track_df, zones):
                 x=track_df["Elapsed Seconds"],
                 y=track_df["Altitude"],
                 name="Elevation",
-                line={"color": "green"},
+                line={"color": "#7DAF74"},
                 fill="tozeroy",
-                fillcolor="rgba(0,255,0,0.1)",
+                fillcolor="rgba(184,224,184,0.3)",
             ),
             row=2,
             col=1,
@@ -124,7 +124,7 @@ def _render_plots(track_df, zones):
                 x=track_df["Elapsed Seconds"],
                 y=track_df[cadence_col],
                 name="Cadence",
-                line={"color": "purple"},
+                line={"color": "#D4B8E8"},
             ),
             row=3,
             col=1,
@@ -213,6 +213,7 @@ def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
             text=df["Pace_Str"],
             textposition="auto",
             showlegend=False,
+            marker_color="#88B4E7",
         )
     )
 
@@ -506,21 +507,40 @@ def _render_route_map(track_df, zones):
     if "Altitude" in gps_df.columns and gps_df["Altitude"].notna().any():
         color_options.append("Elevation")
 
-    color_by = st.radio(
+    col_color, col_tile = st.columns(2)
+    color_by = col_color.radio(
         "Color route by", color_options if color_options else ["None"], horizontal=True
     )
+    tile_style = col_tile.radio(
+        "Map style",
+        ["Light", "Dark","Street"],
+        horizontal=True,
+    )
+
+    _TILE_PROVIDERS = {
+        "Street": "OpenStreetMap",
+        "Light": "CartoDB Positron",
+        "Dark": "CartoDB DarkMatter",
+    }
 
     metric_col, color_fn = _build_color_setup(color_by, gps_df, zones)
 
     center_lat = gps_df["latitude"].mean()
     center_lon = gps_df["longitude"].mean()
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=13,
+        tiles=_TILE_PROVIDERS[tile_style],
+    )
 
     if color_fn and metric_col:
         _draw_colored_route(m, gps_df, metric_col, color_fn)
     else:
+        route_color = (
+            "#555555" if tile_style == "Light" else "#aaaaaa" if tile_style == "Dark" else "#3388ff"
+        )
         coordinates = list(zip(gps_df["latitude"], gps_df["longitude"]))
-        folium.PolyLine(coordinates, color="blue", weight=3, opacity=0.8).add_to(m)
+        folium.PolyLine(coordinates, color=route_color, weight=3, opacity=0.8).add_to(m)
 
     # Kilometre markers
     if "Distance" in gps_df.columns and gps_df["Distance"].notna().any():

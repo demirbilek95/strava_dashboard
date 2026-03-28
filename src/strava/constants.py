@@ -11,11 +11,11 @@ from typing import Dict
 # Z4 = Threshold (orange), Z5 = Max effort (red)
 
 ZONE_COLORS: Dict[str, str] = {
-    "Z1": "#A8D8EA",  # Pastel blue     – Recovery
-    "Z2": "#B8E0B8",  # Pastel green    – Aerobic / fat-burning
-    "Z3": "#F9F1A5",  # Pastel yellow   – Tempo
-    "Z4": "#FAC898",  # Pastel orange   – Threshold
-    "Z5": "#F4A0A0",  # Pastel red      – VO2 max / Red line
+    "Z1": "#A8D8EA",  # Pastel blue        – Recovery
+    "Z2": "#B8E0B8",  # Pastel green       – Aerobic / fat-burning
+    "Z3": "#FCF075",  # Bright pastel yellow  – Tempo (distinct from Z4)
+    "Z4": "#F5A742",  # Pastel amber-orange   – Threshold (distinct from Z3)
+    "Z5": "#F4A0A0",  # Pastel red         – VO2 max / Red line
 }
 
 # Ordered list for legend/category display
@@ -33,13 +33,13 @@ ZONE_LABELS: Dict[str, str] = {
 # Used in training_plan.py for the monthly calendar cells.
 
 WORKOUT_COLORS: Dict[str, str] = {
-    "easy_run": "#66BB6A",  # Green  – mirrors Z2 aerobic
-    "recovery": "#64B5F6",  # Light blue – mirrors Z1 recovery
-    "tempo": "#FFA726",  # Orange – mirrors Z4 threshold
-    "intervals": "#EF5350",  # Red    – mirrors Z5 max effort
-    "long_run": "#42A5F5",  # Mid blue – aerobic long
-    "rest": "#9E9E9E",  # Grey   – rest
-    "cross_training": "#AB47BC",  # Purple – cross training
+    "easy_run": "#B8E0B8",  # Pastel green   – mirrors Z2 aerobic
+    "recovery": "#A8D8EA",  # Pastel blue    – mirrors Z1 recovery
+    "tempo": "#F5A742",  # Pastel amber   – mirrors Z4 threshold
+    "intervals": "#F4A0A0",  # Pastel red     – mirrors Z5 max effort
+    "long_run": "#B8D4F0",  # Pastel mid-blue – aerobic long
+    "rest": "#D0D0D0",  # Light grey     – rest
+    "cross_training": "#D4B8E8",  # Pastel purple – cross training
 }
 
 STATUS_COLORS: Dict[str, str] = {

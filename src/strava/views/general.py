@@ -166,6 +166,7 @@ def _plot_relative_score(filtered_df):
         title="Weekly Total Relative Score (Training Load)",
         labels={"Week": "Week Starting", "suffer_score": "Total Relative Score"},
         text="suffer_score",
+        color_discrete_sequence=["#88B4E7"],
     )
     fig.update_layout(xaxis={"type": "category"})
     st.plotly_chart(fig)

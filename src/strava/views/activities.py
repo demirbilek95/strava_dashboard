@@ -124,6 +124,7 @@ def _plot_distance(filtered_df):
         labels={"distance": "Distance (km)", "Week": "Week Starting"},
         text="distance",
         text_auto=".3s",
+        color_discrete_sequence=["#88B4E7"],
     )
     fig_dist.update_layout(xaxis={"type": "category"})
     st.plotly_chart(fig_dist)

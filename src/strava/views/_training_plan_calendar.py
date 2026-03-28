@@ -7,7 +7,7 @@ from typing import Any, Dict
 import pandas as pd
 import streamlit as st
 
-from strava.constants import WORKOUT_COLORS
+from strava.constants import ACTIVITY_TYPE_COLORS, WORKOUT_COLORS
 from strava.utils.ai_coach import AICoach
 
 _CALENDAR_CSS = """
@@ -25,7 +25,7 @@ _CALENDAR_CSS = """
     background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
     position: relative; display: flex; flex-direction: column; gap: 2px;
 }
-.cal-day.today { border: 2px solid #2196F3; }
+.cal-day.today { border: 2px solid #88B4E7; }
 .cal-day.empty { background: transparent; border: none; min-height: 0; }
 .cal-day-num { font-weight: 600; margin-bottom: 4px; color: #ddd; }
 .cal-workout {
@@ -35,7 +35,7 @@ _CALENDAR_CSS = """
 .cal-actual {
     font-size: 10px; padding: 2px 5px; border-radius: 3px;
     background: rgba(255,255,255,0.1); color: #aaa;
-    margin-top: 2px; border-left: 2px solid #4CAF50;
+    margin-top: 2px; border-left: 2px solid #B8E0B8;
 }
 .cal-detail {
     font-size: 10px; color: #bbb; padding: 1px 6px;
@@ -71,7 +71,7 @@ _INVALID_STR_VALUES = frozenset(("n/a", "none", "null", ""))
 
 
 def _get_workout_color(workout_type: str) -> str:
-    return WORKOUT_COLORS.get(workout_type, "#607D8B")
+    return WORKOUT_COLORS.get(workout_type, ACTIVITY_TYPE_COLORS.get(workout_type, "#CFCFCF"))
 
 
 def _get_status(workout: Dict[str, Any]) -> str:
@@ -276,12 +276,12 @@ def _tab_calendar(database, dataframe: pd.DataFrame) -> None:
 
     st.markdown("---")
     legend_items = [
-        ("\U0001f7e2 Easy Run", "#4CAF50"),
-        ("\U0001f535 Long Run", "#2196F3"),
-        ("\U0001f7e0 Tempo", "#FF9800"),
-        ("\U0001f534 Intervals", "#F44336"),
-        ("\U0001f7e3 Cross Training", "#9C27B0"),
-        ("\u26aa Rest", "#9E9E9E"),
+        ("● Easy Run", WORKOUT_COLORS["easy_run"]),
+        ("● Long Run", WORKOUT_COLORS["long_run"]),
+        ("● Tempo", WORKOUT_COLORS["tempo"]),
+        ("● Intervals", WORKOUT_COLORS["intervals"]),
+        ("● Cross Training", WORKOUT_COLORS["cross_training"]),
+        ("● Rest", WORKOUT_COLORS["rest"]),
     ]
     for col, (label, color) in zip(st.columns(len(legend_items)), legend_items):
         col.markdown(

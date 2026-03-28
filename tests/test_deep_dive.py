@@ -10,6 +10,17 @@ sys.path.append(os.path.abspath("src"))
 # fragment must be a pass-through so decorated functions remain callable.
 mock_st = MagicMock()
 mock_st.fragment = lambda f: f
+
+
+def _make_col_mock():
+    col = MagicMock()
+    col.radio = lambda label, options, **kwargs: options[0]
+    return col
+
+
+mock_st.columns = lambda n: [_make_col_mock() for _ in range(n if isinstance(n, int) else len(n))]
+# radio must return a real string so dict lookups work (e.g. _TILE_PROVIDERS[tile_style])
+mock_st.radio = lambda label, options, **kwargs: options[0]
 sys.modules["streamlit"] = mock_st
 sys.modules["streamlit_folium"] = MagicMock()
 
