@@ -11,11 +11,11 @@ from typing import Dict
 # Z4 = Threshold (orange), Z5 = Max effort (red)
 
 ZONE_COLORS: Dict[str, str] = {
-    "Z1": "#64B5F6",  # Light blue  – Recovery
-    "Z2": "#66BB6A",  # Green       – Aerobic / fat-burning
-    "Z3": "#FFEE58",  # Yellow      – Tempo
-    "Z4": "#FFA726",  # Orange      – Threshold
-    "Z5": "#EF5350",  # Red         – VO2 max / Red line
+    "Z1": "#A8D8EA",  # Pastel blue     – Recovery
+    "Z2": "#B8E0B8",  # Pastel green    – Aerobic / fat-burning
+    "Z3": "#F9F1A5",  # Pastel yellow   – Tempo
+    "Z4": "#FAC898",  # Pastel orange   – Threshold
+    "Z5": "#F4A0A0",  # Pastel red      – VO2 max / Red line
 }
 
 # Ordered list for legend/category display
@@ -78,49 +78,49 @@ ZONE_COLORS_LIST = [ZONE_COLORS[z] for z in ZONE_ORDER]
 # Unknown types fall back to ACTIVITY_TYPE_DEFAULT_COLOR.
 
 ACTIVITY_TYPE_COLORS: Dict[str, str] = {
-    # ── Running ──────────────────────────────────────────────────────
-    "Run": "#FC4C02",  # Strava orange-red
-    "TrailRun": "#D35400",  # Burnt orange – off-road variant
-    "VirtualRun": "#F0B27A",  # Light orange – treadmill / indoor
-    # ── Cycling ──────────────────────────────────────────────────────
-    "Ride": "#4E8EF7",  # Bright blue
-    "VirtualRide": "#85C1E9",  # Light blue – indoor / Zwift
-    "MountainBikeRide": "#1F618D",  # Dark blue – MTB
-    "GravelRide": "#5DADE2",  # Sky blue – gravel
-    "EBikeRide": "#AED6F1",  # Pale blue – e-bike
-    # ── Walking & Hiking ─────────────────────────────────────────────
-    "Walk": "#2ECC71",  # Green
-    "Hike": "#27AE60",  # Dark green
-    # ── Water sports ─────────────────────────────────────────────────
-    "Swim": "#1ABC9C",  # Teal
-    "Rowing": "#2980B9",  # Medium blue
-    "Kayaking": "#16A085",  # Dark teal
-    "StandUpPaddling": "#148F77",  # Deep teal
-    "Surfing": "#117A65",  # Ocean green
-    # ── Winter sports ────────────────────────────────────────────────
-    "AlpineSki": "#A9CCE3",  # Icy light blue
-    "BackcountrySki": "#7FB3D3",
-    "NordicSki": "#5DADE2",
-    "Snowboard": "#2471A3",
-    "IceSkate": "#D6EAF8",
-    # ── Gym & fitness ────────────────────────────────────────────────
-    "WeightTraining": "#E74C3C",  # Red
-    "Workout": "#C0392B",  # Dark red
-    "Yoga": "#9B59B6",  # Purple
-    "Pilates": "#8E44AD",  # Dark purple
-    "CrossFit": "#E67E22",  # Orange
-    "Elliptical": "#F39C12",  # Amber
-    "StairStepper": "#D68910",  # Gold
-    # ── Other ────────────────────────────────────────────────────────
-    "RockClimbing": "#A04000",  # Earthy brown
-    "Golf": "#52BE80",  # Soft green
-    "Soccer": "#58D68D",  # Bright green
-    "Tennis": "#ABEBC6",  # Light green
-    "InlineSkate": "#F8C471",  # Light amber
-    "Skateboard": "#FAD7A0",
+    # Running – pastel blue
+    "Run": "#88B4E7",
+    "TrailRun": "#5A90D0",
+    "VirtualRun": "#B8D4F0",
+    # Cycling – warm peach pastel
+    "Ride": "#F4A261",
+    "VirtualRide": "#F9C9A3",
+    "MountainBikeRide": "#E76F51",
+    "GravelRide": "#F4B483",
+    "EBikeRide": "#FAD7BD",
+    # Walking & hiking – soft green pastel
+    "Walk": "#A8C5A0",
+    "Hike": "#7DAF74",
+    # Water – light blue pastel
+    "Swim": "#A8D8EA",
+    "Rowing": "#7BBFDA",
+    "Kayaking": "#9DCFE0",
+    "StandUpPaddling": "#6BB5D0",
+    "Surfing": "#B8E0EE",
+    # Winter – pale lavender
+    "AlpineSki": "#C9C9E3",
+    "BackcountrySki": "#AEAED4",
+    "NordicSki": "#D9D9EF",
+    "Snowboard": "#B8B8D8",
+    "IceSkate": "#E8E8F5",
+    # Gym & fitness
+    "WeightTraining": "#ED6A5A",  # coral-red pastel
+    "Yoga": "#F4F1BB",  # pale yellow pastel
+    "Pilates": "#F9F5D0",  # lighter yellow
+    "Workout": "#F2A59D",  # light coral
+    "CrossFit": "#E8857A",  # medium coral
+    "Elliptical": "#D4EDDA",  # pale mint
+    "StairStepper": "#C8E6C9",  # soft green
+    # Other
+    "RockClimbing": "#C4A882",
+    "Golf": "#B5D5A0",
+    "Soccer": "#A8D5A2",
+    "Tennis": "#E8EFB0",
+    "InlineSkate": "#FAE0B0",
+    "Skateboard": "#D5C5B5",
 }
 
-ACTIVITY_TYPE_DEFAULT_COLOR = "#95A5A6"  # Grey – fallback for unknown types
+ACTIVITY_TYPE_DEFAULT_COLOR = "#CFCFCF"  # light grey – fallback for unknown types
 
 
 def classify_zone(hr: float, zones: tuple) -> str:

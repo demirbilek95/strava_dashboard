@@ -90,7 +90,12 @@ def _plot_distribution(filtered_df, zones):
             activity_counts.columns = ["Activity Type", "Count"]
 
             fig_pie = px.pie(
-                activity_counts, values="Count", names="Activity Type", title="Activities by Type"
+                activity_counts,
+                values="Count",
+                names="Activity Type",
+                title="Activities by Type",
+                color="Activity Type",
+                color_discrete_map=ACTIVITY_TYPE_COLORS,
             )
             st.plotly_chart(fig_pie)
 
