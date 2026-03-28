@@ -69,3 +69,20 @@ COMPLETION_MIN_DISTANCE_RATIO = 0.70
 
 # For interval workouts, minimum % of stream time in Z4/Z5 to count as "hard"
 INTERVAL_MIN_HARD_ZONE_PCT = 0.10
+
+# Ordered list of zone colors matching ZONE_ORDER
+ZONE_COLORS_LIST = [ZONE_COLORS[z] for z in ZONE_ORDER]
+
+
+def classify_zone(hr: float, zones: tuple) -> str:
+    """Classify a heart rate value into a zone string (Z1–Z5)."""
+    z1, z2, z3, z4 = zones
+    if hr <= z1:
+        return "Z1"
+    if hr <= z2:
+        return "Z2"
+    if hr <= z3:
+        return "Z3"
+    if hr <= z4:
+        return "Z4"
+    return "Z5"

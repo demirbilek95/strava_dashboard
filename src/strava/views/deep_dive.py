@@ -6,8 +6,13 @@ from plotly.subplots import make_subplots
 import folium
 from streamlit_folium import folium_static
 from strava.data import get_activity_stream, get_activities_with_streams
-from strava.utils.activity_processing import _calculate_metrics, _calculate_splits
-from strava.constants import ZONE_COLORS
+from strava.utils.activity_processing import (
+    _calculate_metrics,
+    _calculate_splits,
+    fmt_pace,
+    fmt_duration,
+)
+from strava.constants import ZONE_COLORS_LIST
 
 
 def _render_hr_analysis(track_df, zones):
@@ -54,26 +59,18 @@ def _render_hr_analysis(track_df, zones):
     for col, head in zip(cols, headers):
         col.markdown(f"**{head}**")
 
-    bar_colors = [
-        ZONE_COLORS["Z1"],
-        ZONE_COLORS["Z2"],
-        ZONE_COLORS["Z3"],
-        ZONE_COLORS["Z4"],
-        ZONE_COLORS["Z5"],
-    ]
-
     for i, row in enumerate(zone_data):
         c = st.columns([1, 2, 2, 1, 1, 3])
         c[0].write(row["Zone"])
         c[1].write(row["Description"])
         c[2].text(row["Range"])  # Use .text to avoid markdown quoting
-        c[3].write(format_duration(row["Time"]))
+        c[3].write(fmt_duration(row["Time"]))
         c[4].write(f"{row['Percentage']:.1f}%")
 
         # Simple CSS bar
         bar_html = f"""
             <div style="width: 100%; background-color: #f0f2f6; border-radius: 4px; height: 18px; margin-top: 4px;">
-                <div style="width: {row['Percentage']}%; background-color: {bar_colors[i]}; height: 100%; border-radius: 4px;"></div>
+                <div style="width: {row['Percentage']}%; background-color: {ZONE_COLORS_LIST[i]}; height: 100%; border-radius: 4px;"></div>
             </div>
         """
         c[5].markdown(bar_html, unsafe_allow_html=True)
@@ -99,14 +96,6 @@ def _render_plots(track_df, zones):
         (hr_zones[2], hr_zones[3]),  # Z4
         (hr_zones[3], 220),  # Z5 (cap at 220 or max HR)
     ]
-    hr_zone_colors = [
-        ZONE_COLORS["Z1"],
-        ZONE_COLORS["Z2"],
-        ZONE_COLORS["Z3"],
-        ZONE_COLORS["Z4"],
-        ZONE_COLORS["Z5"],
-    ]
-
     hr_zone_names = ["Z1", "Z2", "Z3", "Z4", "Z5"]
 
     for i, (z_min, z_max) in enumerate(hr_zone_defs):
@@ -118,7 +107,7 @@ def _render_plots(track_df, zones):
             x1=track_df["Elapsed Seconds"].max(),
             y0=z_min,
             y1=z_max,
-            fillcolor=hr_zone_colors[i],
+            fillcolor=ZONE_COLORS_LIST[i],
             opacity=0.2,
             layer="below",
             line_width=0,
@@ -205,14 +194,6 @@ def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
     if df.empty:
         return
 
-    # ---- helpers ----
-    def fmt(p):
-        if pd.isna(p) or p <= 0:
-            return "N/A"
-        m = int(p)
-        s = int((p - m) * 60)
-        return f"{m}:{s:02d}"
-
     df = df.copy()
     df = df[df["Pace"] > 0]
 
@@ -220,7 +201,7 @@ def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
         st.write("No valid pace data available.")
         return
 
-    df["Pace_Str"] = df["Pace"].apply(fmt)
+    df["Pace_Str"] = df["Pace"].apply(fmt_pace)
 
     # ---- stats ----
     min_pace = df["Pace"].min()  # fastest
@@ -274,11 +255,6 @@ def _render_splits_table(track_df):
         st.write("No split data available.")
         return
 
-    def fmt_pace(p):
-        if pd.isna(p) or p == 0:
-            return "N/A"
-        return f"{int(p)}:{int((p%1)*60):02d}"
-
     display_splits = splits.copy()
     display_splits["Pace"] = display_splits["Pace"].apply(fmt_pace)
     display_splits["Avg HR"] = display_splits["Avg HR"].apply(
@@ -310,16 +286,6 @@ def _get_available_activities():
     return activities[mask].copy().sort_values(by="activity_date", ascending=False)
 
 
-def format_duration(seconds):
-    if pd.isna(seconds) or seconds is None:
-        return "N/A"
-    m, s = divmod(int(seconds), 60)
-    h, m = divmod(m, 60)
-    if h > 0:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
-
-
 def _display_stats(track_df, selected_row):
     # Summary data from Strava OR fallback to calculated from tracks
     dist_km = selected_row.get("distance", track_df["Distance"].max() / 1000)
@@ -339,14 +305,13 @@ def _display_stats(track_df, selected_row):
     avg_pace_dec = ((moving_s / 60) / dist_km) if dist_km > 0 else 0
 
     # Top Metrics
-    pace_str = f"{int(avg_pace_dec)}:{int((avg_pace_dec % 1) * 60):02d}"
-    st.markdown(f"## {dist_km:.2f} km | {format_duration(moving_s)} | {pace_str}/km")
+    st.markdown(f"## {dist_km:.2f} km | {fmt_duration(moving_s)} | {fmt_pace(avg_pace_dec)}/km")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Relative Effort", effort)
     col2.metric("Elevation Gain", f"{elev_gain:.0f} m")
     col3.metric("Calories", f"{calories:.0f}" if pd.notna(calories) else "N/A")
-    col4.metric("Elapsed Time", format_duration(elapsed_s))
+    col4.metric("Elapsed Time", fmt_duration(elapsed_s))
 
     st.markdown("---")
 
@@ -395,10 +360,8 @@ def _render_deep_dive_tabs(track_df, laps_df, zones):
             _render_pace_bar_chart(l_display, "Lap", "Pace per Lap", "Elapsed Time")
 
             # Format for display
-            l_display["Pace"] = l_display["Pace"].apply(
-                lambda x: f"{int(x)}:{int((x % 1) * 60):02d}"
-            )
-            l_display["Time"] = l_display["Time"].apply(format_duration)
+            l_display["Pace"] = l_display["Pace"].apply(fmt_pace)
+            l_display["Time"] = l_display["Time"].apply(fmt_duration)
             l_display["Distance"] = l_display["Distance"].apply(lambda x: f"{x:.2f} km")
             l_display["Avg HR"] = l_display["Avg HR"].apply(
                 lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
