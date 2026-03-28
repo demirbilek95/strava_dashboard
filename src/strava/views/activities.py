@@ -155,6 +155,15 @@ def _plot_scatter(filtered_df, zones):
     short_date = km_data["activity_date"].dt.strftime("%b %d")
     km_data["display_name"] = km_data["activity_name"] + " (" + short_date + ")"
 
+    # Stable color mapping: derive color from activity_id so it never shifts
+    # when the period changes and different activities appear.
+    _PALETTE = px.colors.qualitative.Plotly
+    unique_ids = sorted(km_data["activity_id"].unique())
+    id_to_name = (
+        km_data.drop_duplicates("activity_id").set_index("activity_id")["display_name"].to_dict()
+    )
+    color_map = {id_to_name[aid]: _PALETTE[int(aid) % len(_PALETTE)] for aid in unique_ids}
+
     # Create hover template
     hover_cols = ["activity_name", "activity_date_str", "km_segment"]
 
@@ -163,6 +172,7 @@ def _plot_scatter(filtered_df, zones):
         x="avg_pace",
         y="avg_hr",
         color="display_name",
+        color_discrete_map=color_map,
         hover_data=hover_cols,
         title="Heart Rate vs Pace (Per Kilometer) with Zones",
         labels={
