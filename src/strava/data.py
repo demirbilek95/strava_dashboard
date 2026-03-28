@@ -6,7 +6,7 @@ from strava.db.db_manager import DatabaseManager  # pylint: disable=import-error
 _DB_PATH = Path(__file__).parent.parent.parent / "data" / "strava.db"
 
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def load_data():
     """Load activity data from the database."""
     try:
@@ -55,7 +55,7 @@ def load_data():
         return pd.DataFrame()
 
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def get_activity_stream(activity_id: int) -> pd.DataFrame:
     """
     Get detailed stream data for a specific activity from the database.
@@ -89,7 +89,7 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-@st.cache_data
+@st.cache_data(ttl=300)
 def get_activities_with_streams() -> pd.DataFrame:
     """
     Get list of activities that have detailed stream data available.

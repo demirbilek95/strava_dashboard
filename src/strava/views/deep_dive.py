@@ -77,6 +77,7 @@ def _render_hr_analysis(track_df, zones):
 
 
 def _render_plots(track_df, zones):
+    z1, z2, z3, z4 = zones
     st.subheader("Performance Analysis")
     st.caption("Pace calculated using elapsed time")
 
@@ -85,48 +86,6 @@ def _render_plots(track_df, zones):
 
     # 1. Pace (Top) - Standard ordering (Bottom-to-Top) with zone colors
     pace_df = track_df[(track_df["Pace_Decimal"] < 12) & (track_df["Pace_Decimal"] > 3)].copy()
-
-    # Add HR zone colors as background bands for HR plot
-    hr_zones = zones  # (z1, z2, z3, z4)
-    # Define 5 zones: Z1 (<z1), Z2 (z1-z2), Z3 (z2-z3), Z4 (z3-z4), Z5 (>z4)
-    hr_zone_defs = [
-        (0, hr_zones[0]),  # Z1
-        (hr_zones[0], hr_zones[1]),  # Z2
-        (hr_zones[1], hr_zones[2]),  # Z3
-        (hr_zones[2], hr_zones[3]),  # Z4
-        (hr_zones[3], 220),  # Z5 (cap at 220 or max HR)
-    ]
-    hr_zone_names = ["Z1", "Z2", "Z3", "Z4", "Z5"]
-
-    for i, (z_min, z_max) in enumerate(hr_zone_defs):
-        fig.add_shape(
-            type="rect",
-            xref="x",
-            yref="y",
-            x0=track_df["Elapsed Seconds"].min(),
-            x1=track_df["Elapsed Seconds"].max(),
-            y0=z_min,
-            y1=z_max,
-            fillcolor=ZONE_COLORS_LIST[i],
-            opacity=0.2,
-            layer="below",
-            line_width=0,
-            row=4,
-            col=1,
-        )
-        # Add zone label
-        fig.add_annotation(
-            xref="x",
-            yref="y",
-            x=track_df["Elapsed Seconds"].min(),  # Label on Left
-            y=(z_min + z_max) / 2,  # Center of zone
-            text=hr_zone_names[i],
-            showarrow=False,
-            xanchor="left",
-            font={"size": 10, "color": "black"},  # Black text for visibility on light/colored bg
-            row=4,
-            col=1,
-        )
 
     fig.add_trace(
         go.Scatter(
@@ -172,19 +131,50 @@ def _render_plots(track_df, zones):
         )
         fig.update_yaxes(title_text="Cadence (spm)", row=3, col=1)
 
-    # 4. HR (Bottom)
-    fig.add_trace(
-        go.Scatter(
-            x=track_df["Elapsed Seconds"],
-            y=track_df["HR"],
-            name="Heart Rate",
-            line={"color": "red"},
-        ),
-        row=4,
-        col=1,
-    )
+    # 4. HR (Bottom) — line colored by zone
+    hr_valid = track_df[["Elapsed Seconds", "HR"]].dropna().reset_index(drop=True)
+    if not hr_valid.empty:
+        hr_valid["zone_idx"] = hr_valid["HR"].apply(
+            lambda h: 0 if h < z1 else 1 if h < z2 else 2 if h < z3 else 3 if h < z4 else 4
+        )
+        hr_valid["group"] = (hr_valid["zone_idx"] != hr_valid["zone_idx"].shift()).cumsum()
+
+        zone_labels = ["Z1 Recovery", "Z2 Endurance", "Z3 Tempo", "Z4 Threshold", "Z5 Anaerobic"]
+        shown_zones: set = set()
+
+        for grp_id in hr_valid["group"].unique():
+            seg = hr_valid[hr_valid["group"] == grp_id]
+            zone_idx = int(seg["zone_idx"].iloc[0])
+            # Extend one point on each side so adjacent segments share a boundary point
+            start = max(0, seg.index[0] - 1)
+            end = min(len(hr_valid) - 1, seg.index[-1] + 1)
+            fig.add_trace(
+                go.Scatter(
+                    x=hr_valid.loc[start:end, "Elapsed Seconds"],
+                    y=hr_valid.loc[start:end, "HR"],
+                    mode="lines",
+                    name=zone_labels[zone_idx],
+                    legendgroup=f"hr_zone_{zone_idx}",
+                    showlegend=zone_idx not in shown_zones,
+                    line={"color": ZONE_COLORS_LIST[zone_idx], "width": 2},
+                ),
+                row=4,
+                col=1,
+            )
+            shown_zones.add(zone_idx)
     fig.update_yaxes(title_text="Heart Rate (bpm)", row=4, col=1)
 
+    # Format x-axis ticks as M:SS / H:MM:SS instead of raw seconds
+    max_s = int(track_df["Elapsed Seconds"].max())
+    step = 300 if max_s <= 1800 else 600 if max_s <= 5400 else 900
+    tick_vals = list(range(0, max_s + step, step))
+
+    def _fmt_s(s):
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+    fig.update_xaxes(tickvals=tick_vals, ticktext=[_fmt_s(s) for s in tick_vals])
     fig.update_layout(height=850, hovermode="x unified", showlegend=True)
     st.plotly_chart(fig)
 
@@ -345,7 +335,7 @@ def _render_deep_dive_tabs(track_df, laps_df, zones):
         st.info("Kilometer splits (Auto-calculated)")
         splits = _calculate_splits(track_df)
         if not splits.empty:
-            _render_pace_bar_chart(splits, "KM", "Pace per Kilometer", "Elapsed Time")
+            _render_pace_bar_chart(splits, "KM", "Pace per Kilometer", "Moving Time")
             _render_splits_table(track_df)
 
     with tab3:
@@ -376,49 +366,190 @@ def _render_deep_dive_tabs(track_df, laps_df, zones):
             _render_splits_table(track_df)
 
     with tab4:
-        _render_route_map(track_df)
+        _render_route_map(track_df, zones)
 
 
-def _render_route_map(track_df):
+def _hex_gradient(t: float, low: str, high: str) -> str:
+    """Linearly interpolate between two hex colours, t in [0, 1]."""
+    t = max(0.0, min(1.0, t))
+    lr, lg, lb = int(low[1:3], 16), int(low[3:5], 16), int(low[5:7], 16)
+    hr, hg, hb = int(high[1:3], 16), int(high[3:5], 16), int(high[5:7], 16)
+    return (
+        f"#{int(lr + (hr - lr) * t):02x}{int(lg + (hg - lg) * t):02x}{int(lb + (hb - lb) * t):02x}"
+    )
+
+
+def _draw_colored_route(m, gps_df, metric_col, color_fn):
+    """Draw route as consecutive same-colour PolyLine segments."""
+    current_color = None
+    current_coords = []
+
+    for _, row in gps_df.iterrows():
+        color = color_fn(row.get(metric_col))
+        coord = (row["latitude"], row["longitude"])
+        if color != current_color:
+            if current_coords:
+                current_coords.append(coord)  # bridge point to avoid gaps
+                folium.PolyLine(current_coords, color=current_color, weight=4, opacity=0.9).add_to(
+                    m
+                )
+            current_color = color
+            current_coords = [coord]
+        else:
+            current_coords.append(coord)
+
+    if current_coords and current_color:
+        folium.PolyLine(current_coords, color=current_color, weight=4, opacity=0.9).add_to(m)
+
+
+def _build_color_setup(color_by, gps_df, zones):
+    """Return (metric_col, color_fn) and render the legend for the chosen mode."""
+    z1, z2, z3, z4 = zones
+    if color_by == "Heart Rate":
+        zone_defs = [
+            (ZONE_COLORS_LIST[0], f"Z1 &lt;{z1}"),
+            (ZONE_COLORS_LIST[1], f"Z2 {z1}–{z2}"),
+            (ZONE_COLORS_LIST[2], f"Z3 {z2}–{z3}"),
+            (ZONE_COLORS_LIST[3], f"Z4 {z3}–{z4}"),
+            (ZONE_COLORS_LIST[4], f"Z5 &gt;{z4}"),
+        ]
+        badges = " ".join(
+            f'<span style="background:{c};padding:3px 10px;border-radius:4px;'
+            f'font-size:0.82em;color:#222;">{l}</span>'
+            for c, l in zone_defs
+        )
+        st.markdown(badges, unsafe_allow_html=True)
+
+        def _hr_color(val):
+            if pd.isna(val):
+                return "#808080"
+            if val < z1:
+                return ZONE_COLORS_LIST[0]
+            if val < z2:
+                return ZONE_COLORS_LIST[1]
+            if val < z3:
+                return ZONE_COLORS_LIST[2]
+            if val < z4:
+                return ZONE_COLORS_LIST[3]
+            return ZONE_COLORS_LIST[4]
+
+        return "HR", _hr_color
+
+    if color_by == "Pace":
+        valid_pace = gps_df["Pace_Decimal"].replace(0, pd.NA).dropna()
+        valid_pace = valid_pace[(valid_pace > 2) & (valid_pace < 15)]
+        p_min = float(valid_pace.quantile(0.05)) if not valid_pace.empty else 3.0
+        p_max = float(valid_pace.quantile(0.95)) if not valid_pace.empty else 8.0
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px 0;">'
+            f'<span style="font-size:0.82em;white-space:nowrap;">Fast ({fmt_pace(p_min)}/km)</span>'
+            f'<div style="flex:1;height:12px;border-radius:6px;'
+            f'background:linear-gradient(to right,#00cc44,#cc2200);"></div>'
+            f'<span style="font-size:0.82em;white-space:nowrap;">Slow ({fmt_pace(p_max)}/km)</span>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        def _pace_color(val):
+            if pd.isna(val) or val <= 0:
+                return "#808080"
+            t = (val - p_min) / (p_max - p_min) if p_max > p_min else 0.5
+            return _hex_gradient(t, "#00cc44", "#cc2200")
+
+        return "Pace_Decimal", _pace_color
+
+    if color_by == "Elevation":
+        e_min = float(gps_df["Altitude"].min())
+        e_max = float(gps_df["Altitude"].max())
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px 0;">'
+            f'<span style="font-size:0.82em;white-space:nowrap;">Low ({e_min:.0f} m)</span>'
+            f'<div style="flex:1;height:12px;border-radius:6px;'
+            f'background:linear-gradient(to right,#4488ff,#ff4400);"></div>'
+            f'<span style="font-size:0.82em;white-space:nowrap;">High ({e_max:.0f} m)</span>'
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        def _elev_color(val):
+            if pd.isna(val):
+                return "#808080"
+            t = (val - e_min) / (e_max - e_min) if e_max > e_min else 0.5
+            return _hex_gradient(t, "#4488ff", "#ff4400")
+
+        return "Altitude", _elev_color
+
+    return None, None
+
+
+@st.fragment
+def _render_route_map(track_df, zones):
     """Render GPS route map using folium."""
     st.subheader("Route Map")
 
-    # Get GPS coordinates from database stream
     if "latitude" not in track_df.columns or "longitude" not in track_df.columns:
         st.warning("No GPS data available for this activity.")
         return
 
-    # Filter out null coordinates
-    gps_df = track_df.dropna(subset=["latitude", "longitude"])
+    gps_df = track_df.dropna(subset=["latitude", "longitude"]).copy()
 
     if gps_df.empty:
         st.warning("No valid GPS coordinates found.")
         return
 
-    # Create map centered on the route
+    # Build list of available colour modes
+    color_options = []
+    if "HR" in gps_df.columns and gps_df["HR"].notna().any():
+        color_options.append("Heart Rate")
+    if "Pace_Decimal" in gps_df.columns and gps_df["Pace_Decimal"].notna().any():
+        color_options.append("Pace")
+    if "Altitude" in gps_df.columns and gps_df["Altitude"].notna().any():
+        color_options.append("Elevation")
+
+    color_by = st.radio(
+        "Color route by", color_options if color_options else ["None"], horizontal=True
+    )
+
+    metric_col, color_fn = _build_color_setup(color_by, gps_df, zones)
+
     center_lat = gps_df["latitude"].mean()
     center_lon = gps_df["longitude"].mean()
-
     m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
 
-    # Create route coordinates
+    if color_fn and metric_col:
+        _draw_colored_route(m, gps_df, metric_col, color_fn)
+    else:
+        coordinates = list(zip(gps_df["latitude"], gps_df["longitude"]))
+        folium.PolyLine(coordinates, color="blue", weight=3, opacity=0.8).add_to(m)
+
+    # Kilometre markers
+    if "Distance" in gps_df.columns and gps_df["Distance"].notna().any():
+        max_dist_m = gps_df["Distance"].max()
+        for km in range(1, int(max_dist_m / 1000) + 1):
+            target = km * 1000
+            closest = gps_df.iloc[(gps_df["Distance"] - target).abs().argsort().iloc[0]]
+            folium.Marker(
+                location=[closest["latitude"], closest["longitude"]],
+                icon=folium.DivIcon(
+                    html=(
+                        f'<div style="font-size:10px;font-weight:bold;color:#fff;'
+                        f"background:#333;border-radius:50%;width:20px;height:20px;"
+                        f'text-align:center;line-height:20px;border:1px solid #fff;">'
+                        f"{km}</div>"
+                    ),
+                    icon_size=(20, 20),
+                    icon_anchor=(10, 10),
+                ),
+            ).add_to(m)
+
     coordinates = list(zip(gps_df["latitude"], gps_df["longitude"]))
-
-    # Add route line
-    folium.PolyLine(coordinates, color="blue", weight=3, opacity=0.8).add_to(m)
-
-    # Add start marker (green)
     folium.Marker(
         coordinates[0], popup="Start", icon=folium.Icon(color="green", icon="play")
     ).add_to(m)
-
-    # Add finish marker (red)
     folium.Marker(
         coordinates[-1], popup="Finish", icon=folium.Icon(color="red", icon="stop")
     ).add_to(m)
 
-    # Render the map
-    # Use a large width to fill the container (standard Streamlit wide mode is ~1200px)
     folium_static(m, width=1600, height=500)
 
 

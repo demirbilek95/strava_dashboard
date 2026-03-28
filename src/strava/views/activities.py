@@ -9,7 +9,7 @@ from strava.constants import ZONE_COLORS, ZONE_COLORS_LIST, ZONE_ORDER, classify
 
 def _filter_and_setup(df, start_date=None) -> Optional[pd.DataFrame]:
     if "activity_type" in df.columns:
-        df_run = df[(~df["commute"]) & (df["activity_type"] == "Run")].copy()
+        df_run = df[(df["activity_type"] == "Run")].copy()
     else:
         df_run = df[~df["commute"]].copy()
 
@@ -173,7 +173,8 @@ def _plot_scatter(filtered_df, zones):
             "activity_date_str": "Date",
             "km_segment": "Kilometer",
         },
-        range_y=[90, 210],
+        range_y=[100, 220],
+        range_x=[2.5, 10.0],
     )
 
     # Add HR zone backgrounds

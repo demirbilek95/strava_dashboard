@@ -1,4 +1,5 @@
 import datetime
+import time
 
 import streamlit as st
 from strava.data import load_data
@@ -148,14 +149,21 @@ _PERIOD_OPTIONS = {
 # Cleared on sync so the selector resets after new data arrives.
 _DATE_FILTER_KEYS = ("period",)
 
+# How often (in seconds) to automatically check Strava for new activities.
+_AUTO_SYNC_INTERVAL_S = 5 * 60  # 5 minutes
+
 
 def auto_sync(database: DatabaseManager) -> None:
-    """Incrementally sync new activities once per session on page load."""
-    st.session_state["auto_synced"] = True
+    """Incrementally sync new activities. Shows a spinner on the first run only."""
+    is_first = "last_sync_time" not in st.session_state
+    st.session_state["last_sync_time"] = time.time()
     try:
         api = StravaAPI()
         importer = StravaImporter(database, api)
-        with st.spinner("Checking for new activities..."):
+        if is_first:
+            with st.spinner("Checking for new activities..."):
+                count = importer.import_all_data()
+        else:
             count = importer.import_all_data()
         if count:
             # Drop stale date-filter state so plots pick up fresh defaults.
@@ -198,8 +206,9 @@ def main():
         show_welcome_page()
         return
 
-    # ── Auto-sync new activities once per session ──────────────────
-    if "auto_synced" not in st.session_state:
+    # ── Auto-sync: run on first load, then every 5 minutes ────────
+    last_sync = st.session_state.get("last_sync_time", 0)
+    if time.time() - last_sync > _AUTO_SYNC_INTERVAL_S:
         auto_sync(database)
 
     # ── Main dashboard ─────────────────────────────────────────────
@@ -209,7 +218,13 @@ def main():
 
     # Navigation
     st.sidebar.title("Navigation")
-    page_options = ["General Overview", "Activity Run Details", "Deep Dive", "AI Coach", "Races"]
+    page_options = [
+        "General Overview",
+        "Activity Run Details",
+        "Deep Dive",
+        "AI Coach",
+        "Races & PRs",
+    ]
 
     if "requested_page" in st.session_state:
         st.session_state["active_page"] = st.session_state.pop("requested_page")
@@ -224,7 +239,7 @@ def main():
     selected_period = st.sidebar.selectbox(
         "Period",
         list(_PERIOD_OPTIONS.keys()),
-        index=1,  # default: Last 3 months
+        index=0,  # default: Last month
         key="period",
     )
     days = _PERIOD_OPTIONS[selected_period]
@@ -251,8 +266,8 @@ def main():
         page_recent_activities(dataframe, zones)
     elif page == "AI Coach":
         page_ai_training_plan(dataframe, database)
-    elif page == "Races":
-        page_races(dataframe, zones, database)
+    elif page == "Races & PRs":
+        page_races(dataframe, zones, database, start_date)
 
 
 if __name__ == "__main__":
