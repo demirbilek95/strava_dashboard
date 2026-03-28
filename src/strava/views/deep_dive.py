@@ -6,7 +6,12 @@ from plotly.subplots import make_subplots
 import folium
 from streamlit_folium import folium_static
 from strava.data import get_activity_stream, get_activities_with_streams
-from strava.utils.activity_processing import _calculate_metrics, _calculate_splits, fmt_pace, fmt_duration
+from strava.utils.activity_processing import (
+    _calculate_metrics,
+    _calculate_splits,
+    fmt_pace,
+    fmt_duration,
+)
 from strava.constants import ZONE_COLORS_LIST
 
 
