@@ -5,6 +5,8 @@ import pandas as pd
 import streamlit as st
 
 from strava.db.db_manager import DatabaseManager
+from strava.constants import classify_zone
+from strava.utils.activity_processing import fmt_pace, fmt_duration
 
 
 def _get_race_categories():
@@ -62,56 +64,23 @@ def _display_performance_card(m, category, rank=None, is_latest=False):
 
 
 def _calculate_metrics(row, zones):
-    z1, z2, z3, z4 = zones
-
-    # Time
     time_col = "elapsed_time" if "elapsed_time" in row else "moving_time"
     seconds = row[time_col]
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    time_str = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
-
-    # Pace
     dist = row["distance"]
-    if dist > 0:
-        pace_dec = (seconds / 60) / dist
-        pm = int(pace_dec)
-        ps = int((pace_dec - pm) * 60)
-        pace_str = f"{pm}:{ps:02d} /km"
-    else:
-        pace_str = "N/A"
 
-    # HR
     hr_val = row.get("average_heart_rate")
     if pd.isna(hr_val):
         hr_val = None
 
-    avg_hr_str = f"{int(hr_val)} bpm" if hr_val else "N/A"
-
-    zone_str = "N/A"
-    if hr_val:
-        if hr_val <= z1:
-            zone_str = "Z1"
-        elif hr_val <= z2:
-            zone_str = "Z2"
-        elif hr_val <= z3:
-            zone_str = "Z3"
-        elif hr_val <= z4:
-            zone_str = "Z4"
-        else:
-            zone_str = "Z5"
-
     max_hr = row.get("max_heart_rate")
-    max_hr_str = f"{int(max_hr)} bpm" if not pd.isna(max_hr) else "N/A"
 
     return {
         "activity_id": row["activity_id"],
-        "time_str": time_str,
-        "pace_str": pace_str,
-        "avg_hr_str": avg_hr_str,
-        "max_hr_str": max_hr_str,
-        "zone_str": zone_str,
+        "time_str": fmt_duration(seconds),
+        "pace_str": fmt_pace((seconds / 60) / dist, " /km") if dist > 0 else "N/A",
+        "avg_hr_str": f"{int(hr_val)} bpm" if hr_val else "N/A",
+        "max_hr_str": f"{int(max_hr)} bpm" if not pd.isna(max_hr) else "N/A",
+        "zone_str": classify_zone(hr_val, zones) if hr_val else "N/A",
         "date_str": row["activity_date"].strftime("%Y-%m-%d"),
         "name": row.get("activity_name", "Run"),
         "dist": dist,

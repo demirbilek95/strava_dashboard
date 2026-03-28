@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-from strava.constants import ZONE_COLORS, ZONE_ORDER
+from strava.constants import ZONE_COLORS, ZONE_ORDER, classify_zone
 
 
 def _filter_by_date(df, start_date):
@@ -80,7 +80,6 @@ def _plot_weekly_duration(filtered_df):
 
 
 def _plot_distribution(filtered_df, zones):
-    z1_limit, z2_limit, z3_limit, z4_limit = zones
     c1, c2 = st.columns(2)
 
     with c1:
@@ -98,27 +97,9 @@ def _plot_distribution(filtered_df, zones):
         st.subheader("Intensity Distribution")
         if "average_heart_rate" in filtered_df.columns and not filtered_df.empty:
             zone_df = filtered_df.dropna(subset=["average_heart_rate"]).copy()
-
-            def get_zone(hr):
-                if hr <= z1_limit:
-                    return "Z1"
-                if hr <= z2_limit:
-                    return "Z2"
-                if hr <= z3_limit:
-                    return "Z3"
-                if hr <= z4_limit:
-                    return "Z4"
-                return "Z5"
-
-            zone_df["HR Zone"] = zone_df["average_heart_rate"].apply(get_zone)
-
-            zone_colors_map = {
-                "Z1": ZONE_COLORS["Z1"],
-                "Z2": ZONE_COLORS["Z2"],
-                "Z3": ZONE_COLORS["Z3"],
-                "Z4": ZONE_COLORS["Z4"],
-                "Z5": ZONE_COLORS["Z5"],
-            }
+            zone_df["HR Zone"] = zone_df["average_heart_rate"].apply(
+                lambda hr: classify_zone(hr, zones)
+            )
 
             zone_stats = zone_df.groupby("HR Zone")["moving_time"].sum().reset_index()
             zone_stats["Minutes"] = zone_stats["moving_time"] / 60
@@ -130,7 +111,7 @@ def _plot_distribution(filtered_df, zones):
                     names="HR Zone",
                     title="Time in Zones (by Avg HR)",
                     color="HR Zone",
-                    color_discrete_map=zone_colors_map,
+                    color_discrete_map=ZONE_COLORS,
                     category_orders={"HR Zone": ZONE_ORDER},
                 )
                 st.plotly_chart(fig_zone)

@@ -222,3 +222,23 @@ def calculate_per_km_hr_data(activity_ids: List[int], filtered_df: pd.DataFrame)
             current_km += 1
 
     return pd.DataFrame(all_km_data)
+
+
+def fmt_pace(dec: float, suffix: str = "") -> str:
+    """Format a decimal pace value to MM:SS string. Returns 'N/A' for invalid values."""
+    if pd.isna(dec) or dec <= 0:
+        return "N/A"
+    m = int(dec)
+    s = int((dec - m) * 60)
+    return f"{m}:{s:02d}{suffix}"
+
+
+def fmt_duration(seconds) -> str:
+    """Format seconds to H:MM:SS or M:SS string. Returns 'N/A' for missing values."""
+    if pd.isna(seconds) or seconds is None:
+        return "N/A"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"

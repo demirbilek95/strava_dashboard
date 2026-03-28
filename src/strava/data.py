@@ -3,24 +3,21 @@ import streamlit as st
 import pandas as pd
 from strava.db.db_manager import DatabaseManager  # pylint: disable=import-error
 
+_DB_PATH = Path(__file__).parent.parent.parent / "data" / "strava.db"
+
 
 @st.cache_data
 def load_data():
     """Load activity data from the database."""
     try:
-        # Get database path
-        current_dir = Path(__file__).parent
-        project_root = current_dir.parent.parent
-        db_path = project_root / "data" / "strava.db"
-
-        if not db_path.exists():
+        if not _DB_PATH.exists():
             st.error(
-                f"Database not found at {db_path}. "
+                f"Database not found at {_DB_PATH}. "
                 "Please start the dashboard to set up the database."
             )
             return pd.DataFrame()
 
-        db = DatabaseManager(str(db_path))
+        db = DatabaseManager(str(_DB_PATH))
 
         # Load query from file
         query = db.load_query("get_all_activities")
@@ -70,14 +67,10 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
         DataFrame with stream data (timestamp, HR, GPS, pace, etc.)
     """
     try:
-        current_dir = Path(__file__).parent
-        project_root = current_dir.parent.parent
-        db_path = project_root / "data" / "strava.db"
-
-        if not db_path.exists():
+        if not _DB_PATH.exists():
             return pd.DataFrame()
 
-        db = DatabaseManager(str(db_path))
+        db = DatabaseManager(str(_DB_PATH))
         stream_records = db.get_activity_stream(int(activity_id))
 
         if not stream_records:
@@ -105,14 +98,10 @@ def get_activities_with_streams() -> pd.DataFrame:
         DataFrame with activity IDs that have stream data
     """
     try:
-        current_dir = Path(__file__).parent
-        project_root = current_dir.parent.parent
-        db_path = project_root / "data" / "strava.db"
-
-        if not db_path.exists():
+        if not _DB_PATH.exists():
             return pd.DataFrame()
 
-        db = DatabaseManager(str(db_path))
+        db = DatabaseManager(str(_DB_PATH))
         query = db.load_query("get_activities_with_streams")
         rows = db.execute_query(query)
 

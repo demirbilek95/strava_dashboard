@@ -3,8 +3,8 @@ from typing import Optional
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from strava.utils.activity_processing import calculate_per_km_hr_data
-from strava.constants import ZONE_COLORS
+from strava.utils.activity_processing import calculate_per_km_hr_data, fmt_pace
+from strava.constants import ZONE_COLORS, ZONE_COLORS_LIST, ZONE_ORDER, classify_zone
 
 
 def _filter_and_setup(df, start_date=None) -> Optional[pd.DataFrame]:
@@ -41,31 +41,16 @@ def _calculate_metrics(filtered_df):
 
     # Pace Stats
     total_moving_time = filtered_df["moving_time"].sum()
-    if total_distance > 0:
-        avg_pace_decimal = (total_moving_time / 60) / total_distance
-        avg_pace_min = int(avg_pace_decimal)
-        avg_pace_sec = int((avg_pace_decimal - avg_pace_min) * 60)
-        avg_pace_str = f"{avg_pace_min}:{avg_pace_sec:02d} /km"
-    else:
-        avg_pace_str = "N/A"
+    avg_pace_str = (
+        fmt_pace((total_moving_time / 60) / total_distance, " /km") if total_distance > 0 else "N/A"
+    )
 
+    median_pace_str, fastest_pace_str = "N/A", "N/A"
     if "pace_decimal" in filtered_df.columns:
         valid_paces = filtered_df[filtered_df["distance"] > 0]["pace_decimal"].dropna()
         if not valid_paces.empty:
-
-            def fmt_pace(dec):
-                m = int(dec)
-                s = int((dec - m) * 60)
-                return f"{m}:{s:02d} /km"
-
-            median_pace_str = fmt_pace(valid_paces.median())
-            fastest_pace_str = fmt_pace(valid_paces.min())
-        else:
-            median_pace_str = "N/A"
-            fastest_pace_str = "N/A"
-    else:
-        median_pace_str = "N/A"
-        fastest_pace_str = "N/A"
+            median_pace_str = fmt_pace(valid_paces.median(), " /km")
+            fastest_pace_str = fmt_pace(valid_paces.min(), " /km")
 
     return (
         total_distance,
@@ -192,13 +177,6 @@ def _plot_scatter(filtered_df, zones):
     )
 
     # Add HR zone backgrounds
-    colors = [
-        ZONE_COLORS.get("Z1", "lightblue"),
-        ZONE_COLORS.get("Z2", "green"),
-        ZONE_COLORS.get("Z3", "yellow"),
-        ZONE_COLORS.get("Z4", "orange"),
-        ZONE_COLORS.get("Z5", "red"),
-    ]
     limits = [0, z1, z2, z3, z4, 220]
     labels = ["Z1", "Z2", "Z3", "Z4", "Z5"]
 
@@ -207,7 +185,7 @@ def _plot_scatter(filtered_df, zones):
             y0=limits[i],
             y1=limits[i + 1],
             line_width=0,
-            fillcolor=colors[i],
+            fillcolor=ZONE_COLORS_LIST[i],
             opacity=0.1,
             annotation_text=labels[i],
             annotation_position="top left",
@@ -217,7 +195,6 @@ def _plot_scatter(filtered_df, zones):
 
 
 def _plot_zone_distribution(filtered_df, zones):
-    z1, z2, z3, z4 = zones
     st.subheader("Training Intensity Distribution")
 
     if "average_heart_rate" not in filtered_df.columns or filtered_df.empty:
@@ -229,8 +206,6 @@ def _plot_zone_distribution(filtered_df, zones):
         st.info("No heart rate data available for the selected period.")
         return
 
-    # Get per-kilometer HR data
-
     activity_ids = activities_with_hr["activity_id"].tolist()
     km_data = calculate_per_km_hr_data(activity_ids, filtered_df)
 
@@ -238,26 +213,7 @@ def _plot_zone_distribution(filtered_df, zones):
         st.warning("No per-kilometer data available for zone distribution.")
         return
 
-    def get_zone(hr):
-        if hr <= z1:
-            return "Zone 1"
-        if hr <= z2:
-            return "Zone 2"
-        if hr <= z3:
-            return "Zone 3"
-        if hr <= z4:
-            return "Zone 4"
-        return "Zone 5"
-
-    km_data["HR Zone"] = km_data["avg_hr"].apply(get_zone)
-
-    zone_colors = {
-        "Zone 1": ZONE_COLORS.get("Z1", "lightblue"),
-        "Zone 2": ZONE_COLORS.get("Z2", "green"),
-        "Zone 3": ZONE_COLORS.get("Z3", "yellow"),
-        "Zone 4": ZONE_COLORS.get("Z4", "orange"),
-        "Zone 5": ZONE_COLORS.get("Z5", "red"),
-    }
+    km_data["HR Zone"] = km_data["avg_hr"].apply(lambda hr: classify_zone(hr, zones))
 
     metric_choice = st.radio("Distribution Metric", ["Time", "Distance"], horizontal=True)
 
@@ -277,8 +233,8 @@ def _plot_zone_distribution(filtered_df, zones):
             names="HR Zone",
             title=title_text,
             color="HR Zone",
-            color_discrete_map=zone_colors,
-            category_orders={"HR Zone": ["Zone 1", "Zone 2", "Zone 3", "Zone 4", "Zone 5"]},
+            color_discrete_map=ZONE_COLORS,
+            category_orders={"HR Zone": ZONE_ORDER},
         )
         st.plotly_chart(fig_pie)
     else:
