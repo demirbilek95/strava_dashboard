@@ -4,7 +4,6 @@ import datetime
 import re
 from typing import Optional
 
-import google.genai.types as genai_types
 import pandas as pd
 import streamlit as st
 
@@ -127,14 +126,7 @@ def _render_coaching_chat(database: DatabaseManager) -> None:
                 with st.spinner("Thinking..."):
                     coach = _get_coach(database)
                     if not st.session_state["feedback_chat"]:
-                        chat_session = coach.client.chats.create(
-                            model=coach.model_id,
-                            config=genai_types.GenerateContentConfig(
-                                system_instruction=coach._coach_system_instruction,
-                                tools=coach.tools,
-                            ),
-                        )
-                        st.session_state["feedback_chat"] = chat_session
+                        st.session_state["feedback_chat"] = coach._make_chat()
                     reply = coach.chat(st.session_state["feedback_chat"], prompt)
                     st.markdown(reply)
                     st.session_state["feedback_history"].append(
@@ -146,13 +138,16 @@ def _render_coaching_chat(database: DatabaseManager) -> None:
 def _tab_feedback(database: DatabaseManager, dataframe: pd.DataFrame) -> None:
     """Feedback tab with adherence analysis and coaching chat."""
     plan = database.get_active_plan()
-    if not plan:
-        st.info("No active training plan. Generate one in the **Create / Adapt Plan** tab.")
-        return
-    _render_plan_summary(plan)
-    st.divider()
-    _render_adherence_section(database)
-    st.divider()
+    if plan:
+        _render_plan_summary(plan)
+        st.divider()
+        _render_adherence_section(database)
+        st.divider()
+    else:
+        st.info(
+            "No active training plan \u2014 plan-specific analysis is unavailable. "
+            "Generate one in the **Create / Adapt Plan** tab."
+        )
     _render_activity_selector(dataframe)
     st.divider()
     _render_coaching_chat(database)
