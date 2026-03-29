@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import folium
 from streamlit_folium import folium_static
-from strava.data import get_activity_stream, get_activities_with_streams
+from strava.data import get_activity_stream, get_activity_laps, get_activities_with_streams
 from strava.utils.activity_processing import (
     _calculate_metrics,
     _calculate_splits,
@@ -217,6 +217,51 @@ def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
         )
     )
 
+    if "Min_Pace" in df.columns and "Max_Pace" in df.columns:
+        has_range = df["Min_Pace"].notna() & df["Max_Pace"].notna()
+        range_df = df[has_range]
+        if not range_df.empty:
+            # Vertical range lines (min to max) per bar
+            xs, ys = [], []
+            for _, row in range_df.iterrows():
+                xs += [row[label_col], row[label_col], None]
+                ys += [row["Min_Pace"], row["Max_Pace"], None]
+            fig.add_trace(
+                go.Scatter(
+                    x=xs,
+                    y=ys,
+                    mode="lines",
+                    name="Pace range",
+                    line={"color": "#E07B39", "width": 2},
+                    hoverinfo="skip",
+                )
+            )
+            # Tick marks at fastest (min) and slowest (max)
+            fig.add_trace(
+                go.Scatter(
+                    x=range_df[label_col],
+                    y=range_df["Min_Pace"],
+                    mode="markers",
+                    name="Fastest",
+                    marker={"symbol": "line-ew", "size": 10, "color": "#E07B39",
+                            "line": {"width": 2, "color": "#E07B39"}},
+                    text=range_df["Min_Pace"].apply(fmt_pace),
+                    hovertemplate="%{text}/km<extra>Fastest</extra>",
+                )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=range_df[label_col],
+                    y=range_df["Max_Pace"],
+                    mode="markers",
+                    name="Slowest",
+                    marker={"symbol": "line-ew", "size": 10, "color": "#E07B39",
+                            "line": {"width": 2, "color": "#E07B39"}},
+                    text=range_df["Max_Pace"].apply(fmt_pace),
+                    hovertemplate="%{text}/km<extra>Slowest</extra>",
+                )
+            )
+
     # ---- y-axis ticks ----
     tick_vals = list(range(int(y_min), int(y_max) + 1))
     tick_texts = [f"{t}:00/km" for t in tick_vals]
@@ -324,49 +369,108 @@ def _display_stats(track_df, selected_row):
         col3.metric("Avg Cadence", "N/A")
 
 
-def _render_deep_dive_tabs(track_df, laps_df, zones):
-    # Layout like Strava with Route Map tab
-    tab1, tab2, tab3, tab4 = st.tabs(["Analysis", "Splits", "Laps", "Route Map"])
+def _has_meaningful_laps(laps_df):
+    """Return True if laps exist and are not just ~1km auto-splits.
 
-    with tab1:
+    The last lap of any run is always a partial km, so it's excluded from
+    the check — only the preceding laps need to be ~1km for the set to be
+    considered redundant with splits.
+    """
+    if laps_df is None or laps_df.empty:
+        return False
+    # Exclude the last (partial) lap before checking
+    check = laps_df.iloc[:-1] if len(laps_df) > 1 else laps_df
+    return not check["Distance"].between(0.9, 1.1).all()
+
+
+_REST_PACE_THRESHOLD = 12  # min/km — laps slower than this are excluded from the chart
+
+
+def _enrich_laps(laps_df, track_df):
+    """Add Pace, Min_Pace, Max_Pace to laps_df using track_df stream data."""
+    df = laps_df.copy()
+    df["Pace"] = (df["Time"] / df["Distance"]) / 60
+
+    # Reconstruct approximate lap start/end from cumulative elapsed time
+    df["_end_s"] = df["Time"].cumsum()
+    df["_start_s"] = df["_end_s"] - df["Time"]
+
+    min_paces, max_paces = [], []
+    for _, row in df.iterrows():
+        lap_track = track_df[
+            (track_df["Elapsed Seconds"] >= row["_start_s"]) &
+            (track_df["Elapsed Seconds"] < row["_end_s"])
+        ]
+        valid = lap_track["Pace_Decimal"].dropna()
+        valid = valid[(valid > 3) & (valid < 12)]
+        min_paces.append(float(valid.quantile(0.1)) if not valid.empty else None)
+        max_paces.append(float(valid.quantile(0.9)) if not valid.empty else None)
+
+    df["Min_Pace"] = min_paces
+    df["Max_Pace"] = max_paces
+    return df.drop(columns=["_start_s", "_end_s"])
+
+
+def _render_laps_tab(laps_df, track_df):
+    st.info("Device Recorded Laps")
+    st.caption("Pace calculated using elapsed time")
+
+    l_chart = _enrich_laps(laps_df, track_df)
+
+    # Exclude rest laps from the chart — they distort the y-axis and aren't useful
+    active_laps = l_chart[l_chart["Pace"] < _REST_PACE_THRESHOLD]
+    rest_count = len(l_chart) - len(active_laps)
+    if rest_count:
+        st.caption(f"{rest_count} rest lap(s) hidden from chart (pace > {_REST_PACE_THRESHOLD} min/km)")
+
+    _render_pace_bar_chart(active_laps, "Lap", "Pace per Lap", "Elapsed Time")
+
+    # Format all laps for the table (rest laps included)
+    l_display = l_chart.copy()
+    l_display["Pace"] = l_display["Pace"].apply(fmt_pace)
+    l_display["Time"] = l_display["Time"].apply(fmt_duration)
+    l_display["Distance"] = l_display["Distance"].apply(lambda x: f"{x:.2f} km")
+    l_display["Avg HR"] = l_display["Avg HR"].apply(
+        lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
+    )
+    l_display["Cadence"] = l_display["Cadence"].apply(
+        lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
+    )
+    l_display = l_display.drop(columns=["Min_Pace", "Max_Pace"])
+
+    st.dataframe(l_display, width="stretch")
+
+
+def _render_deep_dive_tabs(track_df, laps_df, zones):
+    show_laps = _has_meaningful_laps(laps_df)
+
+    tab_labels = ["Analysis", "Splits"]
+    if show_laps:
+        tab_labels.append("Laps")
+    tab_labels.append("Route Map")
+
+    tabs = st.tabs(tab_labels)
+    tab_idx = 0
+
+    with tabs[tab_idx]:  # Analysis
         _render_plots(track_df, zones)
         _render_hr_analysis(track_df, zones)
+    tab_idx += 1
 
-    with tab2:
+    with tabs[tab_idx]:  # Splits
         st.info("Kilometer splits (Auto-calculated)")
         splits = _calculate_splits(track_df)
         if not splits.empty:
             _render_pace_bar_chart(splits, "KM", "Pace per Kilometer", "Moving Time")
             _render_splits_table(track_df)
+    tab_idx += 1
 
-    with tab3:
-        if laps_df is not None and not laps_df.empty:
-            st.info("Device Recorded Laps")
-            st.caption("Pace calculated using elapsed time")
+    if show_laps:
+        with tabs[tab_idx]:  # Laps
+            _render_laps_tab(laps_df, track_df)
+        tab_idx += 1
 
-            l_display = laps_df.copy()
-            l_display["Pace"] = (l_display["Time"] / l_display["Distance"]) / 60
-
-            # Render bar chart before formatting columns to strings
-            _render_pace_bar_chart(l_display, "Lap", "Pace per Lap", "Elapsed Time")
-
-            # Format for display
-            l_display["Pace"] = l_display["Pace"].apply(fmt_pace)
-            l_display["Time"] = l_display["Time"].apply(fmt_duration)
-            l_display["Distance"] = l_display["Distance"].apply(lambda x: f"{x:.2f} km")
-            l_display["Avg HR"] = l_display["Avg HR"].apply(
-                lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
-            )
-            l_display["Cadence"] = l_display["Cadence"].apply(
-                lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
-            )
-
-            st.dataframe(l_display, width="stretch")
-        else:
-            st.info("No device laps found. Showing 1km splits.")
-            _render_splits_table(track_df)
-
-    with tab4:
+    with tabs[tab_idx]:  # Route Map
         _render_route_map(track_df, zones)
 
 
@@ -604,7 +708,7 @@ def page_recent_activities(_, zones):
     with st.spinner("Loading activity data..."):
         try:
             track_df = get_activity_stream(selected_row["activity_id"])
-            laps_df = pd.DataFrame()
+            laps_df = get_activity_laps(selected_row["activity_id"])
 
             if not track_df.empty:
                 # Rename columns to match existing logic

@@ -156,11 +156,13 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
 
         # ── Phase 4: Sequential DB inserts ─────────────────────────
         _cb("Saving stream data to database...", 0.95)
-        for activity_id, start_date, streams, perceived_exertion in results:
+        for activity_id, start_date, streams, perceived_exertion, laps in results:
             if streams:
                 self._process_and_insert_streams(activity_id, start_date, streams)
             if perceived_exertion is not None:
                 self._update_perceived_exertion(activity_id, perceived_exertion)
+            if laps:
+                self.db.insert_laps(activity_id, laps)
 
         if new_count:
             noun = "activity" if new_count == 1 else "activities"
@@ -232,11 +234,13 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
                     print(f"Failed to fetch data for race {act['id']}: {exc}")
 
         _cb("Saving race stream data...", 0.95)
-        for activity_id, start_date, streams, perceived_exertion in results:
+        for activity_id, start_date, streams, perceived_exertion, laps in results:
             if streams:
                 self._process_and_insert_streams(activity_id, start_date, streams)
             if perceived_exertion is not None:
                 self._update_perceived_exertion(activity_id, perceived_exertion)
+            if laps:
+                self.db.insert_laps(activity_id, laps)
 
         _cb("Race import complete!", 1.0)
         return total
@@ -245,14 +249,14 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
 
     def _fetch_activity_data(
         self, activity: Dict[str, Any]
-    ) -> Optional[Tuple[int, str, Dict, Optional[float]]]:
-        """Fetch streams + optional detail for one activity.
+    ) -> Optional[Tuple[int, str, Dict, Optional[float], List]]:
+        """Fetch streams + detail + laps for one activity.
 
         Each API call is gated by the shared rate limiter to stay within
         Strava's 200 requests/15 min cap.
 
         Returns:
-            (activity_id, start_date_str, streams_dict, perceived_exertion_or_None)
+            (activity_id, start_date_str, streams_dict, perceived_exertion_or_None, laps)
         """
         activity_id = activity["id"]
         start_date = activity["start_date"]
@@ -277,7 +281,14 @@ class StravaImporter:  # pylint: disable=too-few-public-methods
         except Exception as exc:  # pylint: disable=broad-exception-caught
             print(f"Detail fetch failed for {activity_id}: {exc}")
 
-        return (activity_id, start_date, streams, perceived_exertion)
+        laps = []
+        try:
+            self._rate_limiter.acquire()
+            laps = self.api.get_activity_laps(activity_id) or []
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            print(f"Laps fetch failed for {activity_id}: {exc}")
+
+        return (activity_id, start_date, streams, perceived_exertion, laps)
 
     def _update_perceived_exertion(self, activity_id: int, value: float):
         """Persist perceived_exertion for an already-inserted activity."""

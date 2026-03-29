@@ -90,6 +90,40 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300)
+def get_activity_laps(activity_id: int) -> pd.DataFrame:
+    """Get lap data for an activity, formatted for the deep dive view.
+
+    Returns a DataFrame with columns: Lap, Distance (km), Time (s),
+    Avg HR, Cadence — or an empty DataFrame if no laps are stored.
+    """
+    try:
+        if not _DB_PATH.exists():
+            return pd.DataFrame()
+
+        db = DatabaseManager(str(_DB_PATH))
+        laps = db.get_activity_laps(int(activity_id))
+
+        if not laps:
+            return pd.DataFrame()
+
+        rows = []
+        for lap in laps:
+            rows.append({
+                "Lap": f"Lap {lap['lap_index']}",
+                "Distance": (lap["distance"] or 0) / 1000,  # meters → km
+                "Time": lap["elapsed_time"] or 0,            # seconds
+                "Avg HR": lap["average_heartrate"],
+                "Cadence": lap["average_cadence"],
+            })
+
+        return pd.DataFrame(rows)
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        st.error(f"Error loading lap data: {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
 def get_activities_with_streams() -> pd.DataFrame:
     """
     Get list of activities that have detailed stream data available.
