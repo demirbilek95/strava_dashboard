@@ -266,6 +266,21 @@ class StravaAPI:
             page += 1
         return all_activities
 
+    def get_activity_laps(self, activity_id: int) -> List[Dict[str, Any]]:
+        """Fetch lap data for a single activity.
+
+        Args:
+            activity_id: The Strava activity ID.
+
+        Returns:
+            List of lap objects (may be empty on error or 404).
+        """
+        response = self._request("GET", f"{self.BASE_URL}/activities/{activity_id}/laps")
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        return response.json()
+
     def get_activity_detail(self, activity_id: int) -> Dict[str, Any]:
         """Fetch the full detailed activity object for a single activity.
 

@@ -111,6 +111,20 @@ CREATE TABLE IF NOT EXISTS activity_streams (
     FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
 );
 
+-- Lap data from Strava API (/activities/{id}/laps)
+CREATE TABLE IF NOT EXISTS activity_laps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER NOT NULL,
+    lap_index INTEGER NOT NULL,
+    distance REAL,       -- meters
+    elapsed_time REAL,   -- seconds
+    moving_time REAL,    -- seconds
+    average_heartrate REAL,
+    average_cadence REAL,
+    average_speed REAL,  -- m/s
+    FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
+);
+
 -- Indexes for efficient querying
 
 -- Activity indexes

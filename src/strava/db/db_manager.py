@@ -114,6 +114,25 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
                     "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
                 )
 
+                # Ensure the activity_laps table exists (added after initial schema).
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS activity_laps (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        activity_id INTEGER NOT NULL,
+                        lap_index INTEGER NOT NULL,
+                        distance REAL,
+                        elapsed_time REAL,
+                        moving_time REAL,
+                        average_heartrate REAL,
+                        average_cadence REAL,
+                        average_speed REAL,
+                        FOREIGN KEY (activity_id) REFERENCES activities(activity_id)
+                            ON DELETE CASCADE
+                    )
+                    """
+                )
+
         except Exception as exc:  # pylint: disable=broad-exception-caught
             print(f"! Migration check failed: {exc}")
 
@@ -253,6 +272,50 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
         """Delete all stream records for an activity."""
         with self.get_connection() as conn:
             conn.execute("DELETE FROM activity_streams WHERE activity_id = ?", (activity_id,))
+
+    def activity_has_laps(self, activity_id: int) -> bool:
+        """Check if an activity already has lap data."""
+        result = self.execute_query(
+            "SELECT 1 FROM activity_laps WHERE activity_id = ? LIMIT 1", (activity_id,)
+        )
+        return len(result) > 0
+
+    def insert_laps(self, activity_id: int, laps: List[Dict[str, Any]]):
+        """Insert lap records for an activity, replacing any existing ones."""
+        with self.get_connection() as conn:
+            conn.execute("DELETE FROM activity_laps WHERE activity_id = ?", (activity_id,))
+
+        records = []
+        for lap in laps:
+            records.append(
+                {
+                    "activity_id": activity_id,
+                    "lap_index": lap.get("lap_index", 0),
+                    "distance": lap.get("distance"),
+                    "elapsed_time": lap.get("elapsed_time"),
+                    "moving_time": lap.get("moving_time"),
+                    "average_heartrate": lap.get("average_heartrate"),
+                    "average_cadence": lap.get("average_cadence"),
+                    "average_speed": lap.get("average_speed"),
+                }
+            )
+
+        if not records:
+            return
+
+        columns = list(records[0].keys())
+        placeholders = ", ".join(["?" for _ in columns])
+        query = f"INSERT INTO activity_laps ({', '.join(columns)}) VALUES ({placeholders})"
+        params_list = [tuple(r[c] for c in columns) for r in records]
+        self.execute_many(query, params_list)
+
+    def get_activity_laps(self, activity_id: int) -> List[Dict[str, Any]]:
+        """Get all lap records for an activity, ordered by lap index."""
+        rows = self.execute_query(
+            "SELECT * FROM activity_laps WHERE activity_id = ? ORDER BY lap_index",
+            (activity_id,),
+        )
+        return [dict(row) for row in rows]
 
     # ── Training Plan Methods ──────────────────────────────────────────
 
