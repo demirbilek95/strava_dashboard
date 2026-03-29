@@ -4,9 +4,9 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
+from strava.constants import BEST_EFFORT_NAMES, classify_zone
 from strava.db.db_manager import DatabaseManager
-from strava.constants import classify_zone
-from strava.utils.activity_processing import fmt_pace, fmt_duration
+from strava.utils.activity_processing import fmt_duration, fmt_pace
 
 
 def _get_race_categories():
@@ -290,6 +290,94 @@ def _render_personal_records(  # pylint: disable=too-many-branches,too-many-stat
         )
 
 
+# ── Best Efforts tab ───────────────────────────────────────────────────────────
+
+# Strava workout_type=3 means "Workout" (intervals/tempo) — flag these
+# in the UI so users know the PR may have come from a structured session.
+_WORKOUT_LABEL = {3: "Workout/Intervals"}
+
+
+def _effort_source_label(workout_type) -> str:
+    """Return a short label if the effort came from a structured workout."""
+    return _WORKOUT_LABEL.get(workout_type, "")
+
+
+def _render_best_efforts(database: DatabaseManager, zones):
+    st.caption(
+        "Strava-verified segment PRs from every run — including mid-run efforts "
+        "(e.g. a 5k PR set inside a longer run). Only rank-1 (gold) PRs are shown. "
+        "Entries marked **Workout/Intervals** may reflect interval-session paces."
+    )
+
+    prs = database.get_pr_summary()
+
+    if not prs:
+        st.info(
+            "No best effort data yet. Sync your activities (or re-sync) "
+            "to populate this section."
+        )
+        return
+
+    # Index by effort name for ordered display
+    pr_map = {row["effort_name"]: row for row in prs}
+    ordered = [name for name in BEST_EFFORT_NAMES if name in pr_map]
+
+    if not ordered:
+        st.info("No best efforts found.")
+        return
+
+    # ── Overview grid (4 per row) ───────────────────────────────────
+    cols_per_row = 4
+    for row_start in range(0, len(ordered), cols_per_row):
+        chunk = ordered[row_start : row_start + cols_per_row]
+        cols = st.columns(cols_per_row)
+        for col, effort_name in zip(cols, chunk):
+            row = pr_map[effort_name]
+            t = row["elapsed_time"] or row["moving_time"]
+            dist_m = row["distance"]
+            pace = fmt_pace((t / 60) / (dist_m / 1000)) if t and dist_m else "N/A"
+            date_str = pd.to_datetime(row["activity_date"]).strftime("%Y-%m-%d")
+            with col:
+                st.metric(effort_name, fmt_duration(t) if t else "N/A")
+                st.caption(f"{pace} /km · {date_str}")
+
+    st.markdown("---")
+
+    # ── Detail expanders ────────────────────────────────────────────
+    for effort_name in ordered:
+        row = pr_map[effort_name]
+        t = row["elapsed_time"] or row["moving_time"]
+        dist_m = row["distance"]
+        pace = fmt_pace((t / 60) / (dist_m / 1000)) if t and dist_m else "N/A"
+        date_str = pd.to_datetime(row["activity_date"]).strftime("%Y-%m-%d")
+        hr_val = row.get("average_heartrate")
+        max_hr = row.get("max_heartrate")
+        source = _effort_source_label(row.get("workout_type"))
+
+        label = f"**{effort_name}** — {fmt_duration(t) if t else '?'} · {pace} /km"
+        if source:
+            label += f" · ⚠️ {source}"
+        with st.expander(label):
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Time", fmt_duration(t) if t else "N/A")
+            c2.metric("Pace", f"{pace} /km")
+            c3.metric("Avg HR", f"{int(hr_val)} bpm" if hr_val else "N/A")
+            c4.metric("Zone", classify_zone(hr_val, zones) if hr_val else "N/A")
+
+            col_info, col_btn = st.columns([4, 1])
+            caption = f"{row.get('activity_name', 'Run')} · {date_str}"
+            if max_hr:
+                caption += f" · Max HR: {int(max_hr)} bpm"
+            if source:
+                caption += f" · {source}"
+            col_info.caption(caption)
+            btn_key = f"be_dive_{effort_name}_{row['activity_id']}"
+            if col_btn.button("🔍 Deep Dive", key=btn_key):
+                st.session_state["selected_activity_id"] = row["activity_id"]
+                st.session_state["requested_page"] = "Deep Dive"
+                st.rerun()
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 _RACES_IMPORTED_KEY = "races_imported_at"
@@ -336,10 +424,16 @@ def page_races(df, zones, database: Optional[DatabaseManager] = None, start_date
         st.warning("No running activities found.")
         return
 
-    tab_races, tab_prs = st.tabs(["🏁 Races", "🏆 Personal Records"])
+    tab_races, tab_prs, tab_be = st.tabs(["🏁 Races", "🏆 Running PRs", "⚡ Best Efforts"])
 
     with tab_races:
         _render_races(df_runs, zones)
 
     with tab_prs:
         _render_personal_records(df_runs, zones, start_date)
+
+    with tab_be:
+        if database is not None:
+            _render_best_efforts(database, zones)
+        else:
+            st.info("Database connection required to display best efforts.")
