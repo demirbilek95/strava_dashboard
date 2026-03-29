@@ -233,8 +233,8 @@ def test_rate_limiter_called_for_each_api_request(mock_db, mock_api):
 
     imp.import_all_data()
 
-    # 1 activity × 2 API calls (streams + detail) = 2 acquires.
-    assert imp._rate_limiter.acquire.call_count == 2
+    # 1 activity × 3 API calls (streams + detail + laps) = 3 acquires.
+    assert imp._rate_limiter.acquire.call_count == 3
 
 
 # ── import_races ──────────────────────────────────────────────────────────────

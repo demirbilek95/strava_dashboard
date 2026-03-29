@@ -86,9 +86,13 @@ def _calculate_splits(track_df):
             avg_hr = split_data["HR"].mean()
             avg_cadence = split_data["cadence"].mean() if "cadence" in split_data.columns else None
 
-            valid_paces = split_data["Pace_Decimal"][
-                (split_data["Pace_Decimal"] > 3) & (split_data["Pace_Decimal"] < 12)
-            ] if "Pace_Decimal" in split_data.columns else pd.Series(dtype=float)
+            valid_paces = (
+                split_data["Pace_Decimal"][
+                    (split_data["Pace_Decimal"] > 3) & (split_data["Pace_Decimal"] < 12)
+                ]
+                if "Pace_Decimal" in split_data.columns
+                else pd.Series(dtype=float)
+            )
             min_pace = float(valid_paces.min()) if not valid_paces.empty else None
             max_pace = float(valid_paces.max()) if not valid_paces.empty else None
 

@@ -108,13 +108,15 @@ def get_activity_laps(activity_id: int) -> pd.DataFrame:
 
         rows = []
         for lap in laps:
-            rows.append({
-                "Lap": f"Lap {lap['lap_index']}",
-                "Distance": (lap["distance"] or 0) / 1000,  # meters → km
-                "Time": lap["elapsed_time"] or 0,            # seconds
-                "Avg HR": lap["average_heartrate"],
-                "Cadence": lap["average_cadence"],
-            })
+            rows.append(
+                {
+                    "Lap": f"Lap {lap['lap_index']}",
+                    "Distance": (lap["distance"] or 0) / 1000,  # meters → km
+                    "Time": lap["elapsed_time"] or 0,  # seconds
+                    "Avg HR": lap["average_heartrate"],
+                    "Cadence": lap["average_cadence"],
+                }
+            )
 
         return pd.DataFrame(rows)
 

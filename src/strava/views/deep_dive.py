@@ -243,8 +243,12 @@ def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
                     y=range_df["Min_Pace"],
                     mode="markers",
                     name="Fastest",
-                    marker={"symbol": "line-ew", "size": 10, "color": "#E07B39",
-                            "line": {"width": 2, "color": "#E07B39"}},
+                    marker={
+                        "symbol": "line-ew",
+                        "size": 10,
+                        "color": "#E07B39",
+                        "line": {"width": 2, "color": "#E07B39"},
+                    },
                     text=range_df["Min_Pace"].apply(fmt_pace),
                     hovertemplate="%{text}/km<extra>Fastest</extra>",
                 )
@@ -255,8 +259,12 @@ def _render_pace_bar_chart(df, label_col, title, time_basis="Elapsed Time"):
                     y=range_df["Max_Pace"],
                     mode="markers",
                     name="Slowest",
-                    marker={"symbol": "line-ew", "size": 10, "color": "#E07B39",
-                            "line": {"width": 2, "color": "#E07B39"}},
+                    marker={
+                        "symbol": "line-ew",
+                        "size": 10,
+                        "color": "#E07B39",
+                        "line": {"width": 2, "color": "#E07B39"},
+                    },
                     text=range_df["Max_Pace"].apply(fmt_pace),
                     hovertemplate="%{text}/km<extra>Slowest</extra>",
                 )
@@ -398,8 +406,8 @@ def _enrich_laps(laps_df, track_df):
     min_paces, max_paces = [], []
     for _, row in df.iterrows():
         lap_track = track_df[
-            (track_df["Elapsed Seconds"] >= row["_start_s"]) &
-            (track_df["Elapsed Seconds"] < row["_end_s"])
+            (track_df["Elapsed Seconds"] >= row["_start_s"])
+            & (track_df["Elapsed Seconds"] < row["_end_s"])
         ]
         valid = lap_track["Pace_Decimal"].dropna()
         valid = valid[(valid > 3) & (valid < 12)]
@@ -421,7 +429,9 @@ def _render_laps_tab(laps_df, track_df):
     active_laps = l_chart[l_chart["Pace"] < _REST_PACE_THRESHOLD]
     rest_count = len(l_chart) - len(active_laps)
     if rest_count:
-        st.caption(f"{rest_count} rest lap(s) hidden from chart (pace > {_REST_PACE_THRESHOLD} min/km)")
+        st.caption(
+            f"{rest_count} rest lap(s) hidden from chart" f" (pace > {_REST_PACE_THRESHOLD} min/km)"
+        )
 
     _render_pace_bar_chart(active_laps, "Lap", "Pace per Lap", "Elapsed Time")
 
@@ -430,9 +440,7 @@ def _render_laps_tab(laps_df, track_df):
     l_display["Pace"] = l_display["Pace"].apply(fmt_pace)
     l_display["Time"] = l_display["Time"].apply(fmt_duration)
     l_display["Distance"] = l_display["Distance"].apply(lambda x: f"{x:.2f} km")
-    l_display["Avg HR"] = l_display["Avg HR"].apply(
-        lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
-    )
+    l_display["Avg HR"] = l_display["Avg HR"].apply(lambda x: f"{x:.0f}" if pd.notna(x) else "N/A")
     l_display["Cadence"] = l_display["Cadence"].apply(
         lambda x: f"{x:.0f}" if pd.notna(x) else "N/A"
     )
@@ -617,7 +625,7 @@ def _render_route_map(track_df, zones):
     )
     tile_style = col_tile.radio(
         "Map style",
-        ["Light", "Dark","Street"],
+        ["Light", "Dark", "Street"],
         horizontal=True,
     )
 

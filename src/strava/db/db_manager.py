@@ -287,16 +287,18 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
 
         records = []
         for lap in laps:
-            records.append({
-                "activity_id": activity_id,
-                "lap_index": lap.get("lap_index", 0),
-                "distance": lap.get("distance"),
-                "elapsed_time": lap.get("elapsed_time"),
-                "moving_time": lap.get("moving_time"),
-                "average_heartrate": lap.get("average_heartrate"),
-                "average_cadence": lap.get("average_cadence"),
-                "average_speed": lap.get("average_speed"),
-            })
+            records.append(
+                {
+                    "activity_id": activity_id,
+                    "lap_index": lap.get("lap_index", 0),
+                    "distance": lap.get("distance"),
+                    "elapsed_time": lap.get("elapsed_time"),
+                    "moving_time": lap.get("moving_time"),
+                    "average_heartrate": lap.get("average_heartrate"),
+                    "average_cadence": lap.get("average_cadence"),
+                    "average_speed": lap.get("average_speed"),
+                }
+            )
 
         if not records:
             return
