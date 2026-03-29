@@ -123,29 +123,6 @@ ACTIVITY_TYPE_COLORS: Dict[str, str] = {
 ACTIVITY_TYPE_DEFAULT_COLOR = "#CFCFCF"  # light grey – fallback for unknown types
 
 
-# ── Strava Best Effort Standard Distances ─────────────────────────────
-# Ordered by distance (short → long) for display purposes.
-# Matches the effort names Strava uses in the /activities/{id} detail response.
-
-BEST_EFFORT_NAMES = [
-    "400m",
-    "1/2 mile",
-    "1k",
-    "1 mile",
-    "2 mile",
-    "5k",
-    "10k",
-    "15k",
-    "10 mile",
-    "20k",
-    "Half-Marathon",
-    "Marathon",
-]
-
-# Set variant used for O(1) membership checks during import
-BEST_EFFORT_NAMES_SET = frozenset(BEST_EFFORT_NAMES)
-
-
 def classify_zone(hr: float, zones: tuple) -> str:
     """Classify a heart rate value into a zone string (Z1–Z5)."""
     z1, z2, z3, z4 = zones
