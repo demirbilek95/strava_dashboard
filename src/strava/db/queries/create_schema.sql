@@ -111,6 +111,21 @@ CREATE TABLE IF NOT EXISTS activity_streams (
     FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
 );
 
+-- Best effort segments from Strava API (/activities/{id} detail endpoint)
+-- Strava pre-calculates efforts at standard distances (400m, 1k, 1 mile, 5k, 10k, etc.)
+CREATE TABLE IF NOT EXISTS activity_best_efforts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER NOT NULL,
+    effort_name TEXT NOT NULL,  -- e.g. "5k", "1 mile", "Half-Marathon"
+    distance REAL,              -- meters
+    elapsed_time INTEGER,       -- seconds
+    moving_time INTEGER,        -- seconds
+    pr_rank INTEGER,            -- 1=gold PR, 2=silver, 3=bronze, NULL=not a PR
+    average_heartrate REAL,
+    max_heartrate REAL,
+    FOREIGN KEY (activity_id) REFERENCES activities(activity_id) ON DELETE CASCADE
+);
+
 -- Lap data from Strava API (/activities/{id}/laps)
 CREATE TABLE IF NOT EXISTS activity_laps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,6 +147,10 @@ CREATE INDEX IF NOT EXISTS idx_activities_date ON activities(activity_date);
 CREATE INDEX IF NOT EXISTS idx_activities_type ON activities(activity_type);
 CREATE INDEX IF NOT EXISTS idx_activities_type_date ON activities(activity_type, activity_date);
 CREATE INDEX IF NOT EXISTS idx_activities_commute ON activities(commute);
+
+-- Best efforts indexes
+CREATE INDEX IF NOT EXISTS idx_best_efforts_activity ON activity_best_efforts(activity_id);
+CREATE INDEX IF NOT EXISTS idx_best_efforts_name_date ON activity_best_efforts(effort_name, activity_id);
 
 -- Stream indexes
 CREATE INDEX IF NOT EXISTS idx_streams_activity ON activity_streams(activity_id);

@@ -1,5 +1,7 @@
 """Database manager for Strava activity data."""
 
+# pylint: disable=too-many-lines
+
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
@@ -131,6 +133,33 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
                             ON DELETE CASCADE
                     )
                     """
+                )
+
+                # Ensure the activity_best_efforts table exists.
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS activity_best_efforts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        activity_id INTEGER NOT NULL,
+                        effort_name TEXT NOT NULL,
+                        distance REAL,
+                        elapsed_time INTEGER,
+                        moving_time INTEGER,
+                        pr_rank INTEGER,
+                        average_heartrate REAL,
+                        max_heartrate REAL,
+                        FOREIGN KEY (activity_id) REFERENCES activities(activity_id)
+                            ON DELETE CASCADE
+                    )
+                    """
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_best_efforts_activity "
+                    "ON activity_best_efforts(activity_id)"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_best_efforts_name_date "
+                    "ON activity_best_efforts(effort_name, activity_id)"
                 )
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -316,6 +345,65 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
             (activity_id,),
         )
         return [dict(row) for row in rows]
+
+    def insert_best_efforts(self, activity_id: int, efforts: List[Dict[str, Any]]):
+        """Insert best effort records for an activity, replacing any existing ones."""
+        with self.get_connection() as conn:
+            conn.execute("DELETE FROM activity_best_efforts WHERE activity_id = ?", (activity_id,))
+
+        records = [
+            {
+                "activity_id": activity_id,
+                "effort_name": e.get("name"),
+                "distance": e.get("distance"),
+                "elapsed_time": e.get("elapsed_time"),
+                "moving_time": e.get("moving_time"),
+                "pr_rank": e.get("pr_rank"),
+                "average_heartrate": e.get("average_heartrate"),
+                "max_heartrate": e.get("max_heartrate"),
+            }
+            for e in efforts
+        ]
+        if not records:
+            return
+
+        columns = list(records[0].keys())
+        placeholders = ", ".join(["?" for _ in columns])
+        query = f"INSERT INTO activity_best_efforts ({', '.join(columns)}) VALUES ({placeholders})"
+        params_list = [tuple(r[c] for c in columns) for r in records]
+        self.execute_many(query, params_list)
+
+    def get_pr_summary(self) -> List[Dict[str, Any]]:
+        """Return the all-time PR (rank 1) for each standard effort distance."""
+        rows = self.execute_query(
+            """
+            SELECT be.effort_name, be.distance, be.elapsed_time, be.moving_time,
+                   be.average_heartrate, be.max_heartrate,
+                   a.activity_date, a.activity_name, a.activity_id, a.workout_type
+            FROM activity_best_efforts be
+            JOIN activities a ON be.activity_id = a.activity_id
+            WHERE be.pr_rank = 1
+            ORDER BY be.distance
+            """
+        )
+        return [dict(r) for r in rows]
+
+    def get_best_efforts_history(self, effort_name: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return chronological best efforts for a named standard distance."""
+        rows = self.execute_query(
+            """
+            SELECT be.effort_name, be.distance, be.elapsed_time, be.moving_time,
+                   be.pr_rank, be.average_heartrate, a.activity_date, a.activity_name,
+                   a.activity_id
+            FROM activity_best_efforts be
+            JOIN activities a ON be.activity_id = a.activity_id
+            WHERE be.effort_name = ?
+            ORDER BY a.activity_date DESC
+            LIMIT ?
+            """,
+            (effort_name, limit),
+        )
+        return [dict(r) for r in rows]
 
     # ── Training Plan Methods ──────────────────────────────────────────
 
