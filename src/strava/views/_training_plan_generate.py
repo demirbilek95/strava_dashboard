@@ -14,14 +14,24 @@ from strava.views._training_plan_calendar import _render_month_nav, _render_cale
 
 
 def _get_coach(database: DatabaseManager) -> AICoach:
-    """Initialise AICoach with global HR zones from session state."""
+    """Return a cached AICoach, recreating it only when HR zones change.
+
+    Caching the instance across Streamlit reruns keeps the underlying
+    genai.Client alive so stored chat sessions remain usable for follow-up
+    messages without triggering 'client has been closed' errors.
+    """
     zones = [
         st.session_state.get("global_z1", 145),
         st.session_state.get("global_z2", 164),
         st.session_state.get("global_z3", 174),
         st.session_state.get("global_z4", 188),
     ]
-    return AICoach(database, hr_zones=zones)
+    cached: Optional[AICoach] = st.session_state.get("_coach_instance")
+    if cached is not None and cached.hr_zones == zones:
+        return cached
+    coach = AICoach(database, hr_zones=zones)
+    st.session_state["_coach_instance"] = coach
+    return coach
 
 
 def _show_active_plan(database: DatabaseManager, active_plan: dict) -> None:
