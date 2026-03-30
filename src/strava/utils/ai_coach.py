@@ -495,9 +495,11 @@ class AICoach:
             duration = (
                 _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
             )
-            hr = _fmt_hr(row.get("average_heart_rate")) if pd.notnull(
-                row.get("average_heart_rate")
-            ) else ""
+            hr = (
+                _fmt_hr(row.get("average_heart_rate"))
+                if pd.notnull(row.get("average_heart_rate"))
+                else ""
+            )
             is_indoor = " [INDOOR]" if row.get("trainer") else ""
             elev = (
                 f"| Elev: {row['elevation_gain']}m" if pd.notnull(row.get("elevation_gain")) else ""
