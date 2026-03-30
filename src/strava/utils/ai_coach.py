@@ -286,9 +286,7 @@ class AICoach:
         load_dotenv()
         api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            raise ValueError(
-                "No Gemini API key found. Set GEMINI_API_KEY in your .env file."
-            )
+            raise ValueError("No Gemini API key found. Set GEMINI_API_KEY in your .env file.")
 
         self.client = genai.Client(api_key=api_key)
         self.model_id = "gemini-2.5-flash"
@@ -582,16 +580,51 @@ class AICoach:
         )
 
     def _tool_deduce_performance_zones(self) -> str:
-        """Analyze best races to suggest Threshold HR."""
-        races_text = self._tool_get_race_history()
-        if "No races" in races_text:
-            return "Cannot deduce zones: No race history found in database."
-        return (
-            "Based on your race history, your Threshold HR (Z4/Z5 boundary) "
-            "appears to be around 178-182 bpm. "
-            f"Current settings: Z1<{self.hr_zones[0]}, Z2<{self.hr_zones[1]}, "
-            f"Z3<{self.hr_zones[2]}, Z4<{self.hr_zones[3]}"
-        )
+        """Report the user's configured HR zones and cross-check against race HR data."""
+        z1, z2, z3, z4 = self.hr_zones
+        lines = [
+            "Athlete's configured HR zones (set in the sidebar):",
+            f"  Z1 Recovery:  < {z1} bpm",
+            f"  Z2 Aerobic:   {z1} – {z2 - 1} bpm",
+            f"  Z3 Tempo:     {z2} – {z3 - 1} bpm",
+            f"  Z4 Threshold: {z3} – {z4 - 1} bpm",
+            f"  Z5 Red Line:  ≥ {z4} bpm",
+        ]
+
+        # Cross-check against best effort HR data if available
+        prs = self.db.get_pr_summary()
+        reference_efforts = [
+            e for e in prs if e.get("effort_name") in ("5k", "10k") and e.get("average_heartrate")
+        ]
+        if reference_efforts:
+            lines.append("")
+            lines.append("Race HR reference (from best efforts):")
+            for effort in reference_efforts:
+                hr = int(effort["average_heartrate"])
+                name = effort["effort_name"]
+                # 5K avg HR ≈ slightly above threshold; 10K avg HR ≈ threshold
+                note = "≈ slightly above threshold" if name == "5k" else "≈ threshold"
+                lines.append(f"  {name} best effort avg HR: {hr} bpm ({note})")
+            hrs = [int(e["average_heartrate"]) for e in reference_efforts]
+            suggested = sum(hrs) // len(hrs)
+            if suggested < z3 or suggested > z4:
+                lines.append(
+                    f"  ⚠️  Race data suggests threshold HR around {suggested} bpm, "
+                    f"but your Z4 is set to {z3}–{z4 - 1} bpm. "
+                    "Consider adjusting your zones in the sidebar."
+                )
+            else:
+                lines.append(
+                    f"  ✅ Race data ({suggested} bpm) is consistent with your Z4 setting."
+                )
+        else:
+            lines.append("")
+            lines.append(
+                "No 5K/10K best effort HR data available to cross-check zones. "
+                "Zone settings are taken as configured."
+            )
+
+        return "\n".join(lines)
 
     def _tool_get_km_splits(self, activity_id: int) -> str:
         """
