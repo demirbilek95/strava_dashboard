@@ -5,9 +5,10 @@ import datetime
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
-from strava.constants import ACTIVITY_TYPE_COLORS, WORKOUT_COLORS
+from strava.constants import ACTIVITY_TYPE_COLORS, INVALID_STR_VALUES, WORKOUT_COLORS
 from strava.db.db_manager import DatabaseManager
 from strava.utils.ai_coach import AICoach
 
@@ -68,8 +69,6 @@ _ICON_MAP: Dict[str, str] = {
     "rest": "\U0001f634",
 }
 
-_INVALID_STR_VALUES = frozenset(("n/a", "none", "null", ""))
-
 
 def _get_workout_color(workout_type: str) -> str:
     return WORKOUT_COLORS.get(workout_type, ACTIVITY_TYPE_COLORS.get(workout_type, "#CFCFCF"))
@@ -95,10 +94,10 @@ def _build_workout_html(w: Dict[str, Any]) -> str:
 
     stats_parts = []
     dist = w.get("target_distance_km")
-    if dist and str(dist).lower() not in _INVALID_STR_VALUES:
+    if dist and str(dist).lower() not in INVALID_STR_VALUES:
         stats_parts.append(f"{dist}km")
     pace_val = w.get("target_pace_min_km")
-    if pace_val and str(pace_val).lower() not in _INVALID_STR_VALUES:
+    if pace_val and str(pace_val).lower() not in INVALID_STR_VALUES:
         try:
             pv = float(pace_val)
             mins, secs = int(pv), int((pv - int(pv)) * 60)
@@ -116,7 +115,7 @@ def _build_workout_html(w: Dict[str, Any]) -> str:
     if w.get("description") and w["workout_type"] != "rest":
         details.append(w["description"])
     hr_zone = w.get("target_hr_zone")
-    if hr_zone and str(hr_zone).lower() not in _INVALID_STR_VALUES:
+    if hr_zone and str(hr_zone).lower() not in INVALID_STR_VALUES:
         details.append(hr_zone)
     if details:
         html += f'<div class="cal-detail">{sep.join(details)}</div>'
@@ -138,7 +137,7 @@ def _build_activity_html(act) -> str:
     hr_val = act.get("average_heart_rate")
     hr = f"{int(hr_val)}bpm" if pd.notnull(hr_val) and hr_val else ""
     stats = " \u00b7 ".join(d for d in [dist_str, pace, hr] if d)
-    label = stats if stats else name
+    label = f"{name}" + (f" \u00b7 {stats}" if stats else "")
     return f'<div class="cal-actual" title="{name}">{emoji} {label}</div>'
 
 
@@ -214,24 +213,104 @@ def _render_calendar(year: int, month: int, workouts: list, activities_df: pd.Da
     st.markdown(html, unsafe_allow_html=True)
 
 
-def _render_weekly_breakdown(workouts: list) -> None:
-    """Render weekly training breakdown below the calendar."""
+def _render_weekly_breakdown(workouts: list, activities_df: pd.DataFrame) -> None:
+    """Render weekly training breakdown as a planned vs done bar chart."""
     st.markdown("### \U0001f4ca Weekly Breakdown")
     if not workouts:
         return
+
     wdf = pd.DataFrame(workouts)
     wdf["workout_date"] = pd.to_datetime(wdf["workout_date"])
-    wdf["week"] = wdf["workout_date"].dt.isocalendar().week
-    for week_num, group in wdf.groupby("week"):
-        total_dist = group["target_distance_km"].sum() if "target_distance_km" in wdf.columns else 0
-        n_workouts = len(group[group["workout_type"] != "rest"])
-        completed = group["completed"].sum() if "completed" in wdf.columns else 0
-        dist_str = (
-            f"{total_dist:.1f}km planned, " if pd.notnull(total_dist) and total_dist > 0 else ""
+    # ISO week start (Monday)
+    wdf["week_start"] = wdf["workout_date"] - pd.to_timedelta(
+        wdf["workout_date"].dt.dayofweek, unit="D"
+    )
+    wdf["target_distance_km"] = pd.to_numeric(wdf["target_distance_km"], errors="coerce").fillna(0)
+
+    # Build activity_id → actual distance (km) lookup from the Strava activities
+    act_dist: Dict[int, float] = {}
+    if not activities_df.empty and "activity_id" in activities_df.columns:
+        for _, row in activities_df.iterrows():
+            raw = row.get("distance", 0)
+            if pd.notnull(raw) and raw > 0:
+                act_dist[int(row["activity_id"])] = float(raw) / 1000.0
+
+    today = datetime.date.today()
+    rows = []
+    for week_start, grp in wdf.groupby("week_start"):
+        non_rest = grp[grp["workout_type"] != "rest"]
+        planned_km = non_rest["target_distance_km"].sum()
+        n_planned = len(non_rest)
+        n_done = int(grp["completed"].sum()) if "completed" in grp.columns else 0
+
+        # Actual km: use matched activity distance where available, else planned km of completed
+        done_km = 0.0
+        for _, w in grp.iterrows():
+            if not w.get("completed"):
+                continue
+            act_id = w.get("activity_id")
+            if act_id and int(act_id) in act_dist:
+                done_km += act_dist[int(act_id)]
+            elif w["target_distance_km"] > 0:
+                done_km += float(w["target_distance_km"])
+
+        week_date = week_start.date() if hasattr(week_start, "date") else week_start
+        is_past = week_date + datetime.timedelta(days=6) < today
+        rows.append(
+            {
+                "week_start": week_date,
+                "label": week_date.strftime("W%W\n%b %d"),
+                "planned_km": round(planned_km, 1),
+                "done_km": round(done_km, 1),
+                "n_planned": n_planned,
+                "n_done": n_done,
+                "is_past": is_past,
+            }
         )
-        st.markdown(
-            f"**Week {week_num}**: {n_workouts} workouts, " f"{dist_str}{int(completed)} completed"
+
+    if not rows:
+        return
+
+    rows.sort(key=lambda r: r["week_start"])
+    labels = [r["label"] for r in rows]
+    planned = [r["planned_km"] for r in rows]
+    done = [r["done_km"] for r in rows]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            name="Planned",
+            x=labels,
+            y=planned,
+            marker_color="#B8D4F0",
+            text=[f"{v:.1f}km" if v else "" for v in planned],
+            textposition="outside",
+            textfont={"size": 11},
         )
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Done",
+            x=labels,
+            y=done,
+            marker_color="#66BB6A",
+            text=[f"{v:.1f}km" if v else "" for v in done],
+            textposition="outside",
+            textfont={"size": 11},
+        )
+    )
+    fig.update_layout(
+        barmode="group",
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#ddd", "size": 12},
+        legend={"orientation": "h", "y": 1.1, "x": 0},
+        margin={"t": 40, "b": 20, "l": 10, "r": 10},
+        yaxis={"title": "km", "gridcolor": "rgba(255,255,255,0.08)"},
+        xaxis={"tickfont": {"size": 11}},
+        height=320,
+    )
+    st.plotly_chart(fig)
 
 
 _EDITABLE_WORKOUT_TYPES: List[str] = [
@@ -242,6 +321,7 @@ _EDITABLE_WORKOUT_TYPES: List[str] = [
     "rest",
     "cross_training",
     "recovery",
+    "strength",
 ]
 
 
@@ -262,7 +342,7 @@ def _render_edit_table(database: DatabaseManager, workouts: List[Dict[str, Any]]
 
     rows = [
         {
-            "Date": w["workout_date"],
+            "Date": datetime.date.fromisoformat(w["workout_date"]),
             "Type": w.get("workout_type", "rest"),
             "Description": w.get("description") or "",
             "Distance (km)": w.get("target_distance_km"),
@@ -297,7 +377,7 @@ def _render_edit_table(database: DatabaseManager, workouts: List[Dict[str, Any]]
             "HR Zone": st.column_config.TextColumn("HR Zone", max_chars=20),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         num_rows="fixed",
         key="edit_workouts_table",
     )
@@ -411,4 +491,4 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame) -> None:
             f'<span style="color:{color};font-size:12px">{label}</span>',
             unsafe_allow_html=True,
         )
-    _render_weekly_breakdown(plan["workouts"])
+    _render_weekly_breakdown(plan["workouts"], dataframe)

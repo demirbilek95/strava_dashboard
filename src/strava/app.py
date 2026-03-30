@@ -116,7 +116,7 @@ def show_welcome_page():
                 "🔗 Connect with Strava",
                 auth_url,
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             st.error(f"Failed to generate authorization URL: {exc}")
