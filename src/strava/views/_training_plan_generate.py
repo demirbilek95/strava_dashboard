@@ -13,6 +13,15 @@ from strava.utils.ai_coach import AICoach
 from strava.views._training_plan_calendar import _render_month_nav, _render_calendar
 
 
+def _set_draft_plan_state(plan_text: str, chat, goal: str) -> None:
+    """Persist a freshly generated or adapted plan into Streamlit session state."""
+    st.session_state["draft_plan_text"] = plan_text
+    st.session_state["draft_plan_json"] = AICoach.parse_plan_json(plan_text)
+    st.session_state["gemini_chat"] = chat
+    st.session_state["user_goal"] = goal
+    st.session_state["chat_history"] = [{"role": "assistant", "content": plan_text}]
+
+
 def _get_coach(database: DatabaseManager) -> AICoach:
     """Return a cached AICoach, recreating it only when HR zones change.
 
@@ -77,11 +86,7 @@ def _show_adapt_input(database: DatabaseManager, active_plan: dict) -> None:
                 chat, plan_text = coach.adapt_plan(adapt_request)
 
             if chat and plan_text:
-                st.session_state["draft_plan_text"] = plan_text
-                st.session_state["draft_plan_json"] = AICoach.parse_plan_json(plan_text)
-                st.session_state["gemini_chat"] = chat
-                st.session_state["user_goal"] = active_plan["goal"]
-                st.session_state["chat_history"] = [{"role": "assistant", "content": plan_text}]
+                _set_draft_plan_state(plan_text, chat, active_plan["goal"])
                 st.session_state["is_adapting"] = False
                 st.session_state["adapting_plan_id"] = active_plan["plan_id"]
                 st.session_state["nav_target"] = "\U0001f4dd Create / Adapt Plan"
@@ -114,11 +119,7 @@ def _show_goal_input(database: DatabaseManager) -> None:
             chat, plan_text = coach.generate_plan(user_goal)
 
         if chat and plan_text:
-            st.session_state["draft_plan_text"] = plan_text
-            st.session_state["draft_plan_json"] = AICoach.parse_plan_json(plan_text)
-            st.session_state["gemini_chat"] = chat
-            st.session_state["user_goal"] = user_goal
-            st.session_state["chat_history"] = [{"role": "assistant", "content": plan_text}]
+            _set_draft_plan_state(plan_text, chat, user_goal)
             st.rerun()
         else:
             st.error(plan_text)
@@ -153,6 +154,7 @@ def _handle_accept(database: DatabaseManager) -> None:
     st.session_state["gemini_chat"] = None
     st.session_state["chat_history"] = []
     st.session_state["plan_accepted"] = False
+    st.session_state.pop("coach_snapshot", None)
     st.success("\u2705 Plan saved! Check the **Calendar** tab.")
     st.session_state["nav_target"] = "\U0001f4c5 Calendar"
     st.rerun()

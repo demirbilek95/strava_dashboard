@@ -9,6 +9,7 @@ import streamlit as st
 
 from strava.constants import COMPLETION_MIN_DISTANCE_RATIO, WORKOUT_TYPE_COMPATIBLE
 from strava.db.db_manager import DatabaseManager
+from strava.utils.ai_coach import AICoach
 from strava.views._training_plan_calendar import _tab_calendar
 from strava.views._training_plan_generate import _get_coach, _tab_generate_plan
 
@@ -183,6 +184,32 @@ def _render_activity_selector(dataframe: pd.DataFrame) -> None:
             )
 
 
+def _apply_feedback_plan(database: DatabaseManager, plan_json: dict) -> None:
+    """Archive the current active plan and save a coach-revised plan from the feedback chat."""
+    active = database.get_active_plan()
+    if active:
+        database.archive_plan(active["plan_id"])
+
+    goal = active["goal"] if active else st.session_state.get("user_goal", "Coach-revised plan")
+    plan_text = st.session_state.pop("_pending_feedback_plan_text", "")
+    plan_id = database.insert_training_plan(
+        {
+            "goal": goal,
+            "start_date": plan_json.get("start_date", datetime.date.today().isoformat()),
+            "end_date": plan_json.get("end_date"),
+            "status": "active",
+            "raw_llm_response": plan_text,
+        }
+    )
+    workout_records = AICoach.plan_json_to_workouts(plan_id, plan_json)
+    database.insert_planned_workouts(workout_records)
+
+    st.session_state.pop("_pending_feedback_plan_json", None)
+    st.session_state.pop("coach_snapshot", None)
+    st.success("\u2705 Plan updated! Check the **Calendar** tab.")
+    st.rerun()
+
+
 def _render_coaching_chat(database: DatabaseManager) -> None:
     """Render the coaching chat interface."""
     st.markdown("### \U0001f4ac Ask Your Coach")
@@ -226,7 +253,29 @@ def _render_coaching_chat(database: DatabaseManager) -> None:
                     st.session_state["feedback_history"].append(
                         {"role": "assistant", "content": reply}
                     )
+                    new_plan_json = AICoach.parse_plan_json(reply)
+                    if new_plan_json:
+                        st.session_state["_pending_feedback_plan_json"] = new_plan_json
+                        st.session_state["_pending_feedback_plan_text"] = reply
                     st.rerun()
+
+    pending_json = st.session_state.get("_pending_feedback_plan_json")
+    if pending_json:
+        st.info(
+            "\U0001f4cb The coach included an updated plan in their response. "
+            "Apply it to replace your current plan?"
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(
+                "\u2705 Apply Plan Changes", type="primary", key="apply_feedback_plan_btn"
+            ):
+                _apply_feedback_plan(database, pending_json)
+        with col2:
+            if st.button("Dismiss", key="dismiss_feedback_plan_btn"):
+                st.session_state.pop("_pending_feedback_plan_json", None)
+                st.session_state.pop("_pending_feedback_plan_text", None)
+                st.rerun()
 
 
 def _tab_feedback(database: DatabaseManager, dataframe: pd.DataFrame) -> None:

@@ -14,6 +14,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
+from strava.constants import INVALID_STR_VALUES
 from strava.db.db_manager import DatabaseManager
 
 
@@ -49,6 +50,20 @@ def _fmt_duration(total_seconds: float) -> str:
     if h:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
+
+
+def _fmt_dist_km(dist_m) -> str:
+    """Format a distance in metres as km string, or 'N/A'."""
+    if dist_m is None or not pd.notnull(dist_m):
+        return "N/A"
+    return f"{float(dist_m) / 1000:.2f}km"
+
+
+def _fmt_hr(hr) -> str:
+    """Format a heart-rate value as 'NNNbpm', or 'N/A'."""
+    if hr is None or not pd.notnull(hr):
+        return "N/A"
+    return f"{int(hr)}bpm"
 
 
 # ── Tool function declarations for google-genai ───────────────────────
@@ -470,7 +485,7 @@ class AICoach:
         for _, row in recent.iterrows():
             date_str = row["activity_date"].strftime("%Y-%m-%d")
             dist_m = row.get("distance")
-            dist = f"{dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "N/A"
+            dist = _fmt_dist_km(dist_m)
 
             pace = (
                 _pace_from_time_dist(row["moving_time"], dist_m)
@@ -481,7 +496,7 @@ class AICoach:
                 _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
             )
             hr = (
-                f"{int(row['average_heart_rate'])}bpm"
+                _fmt_hr(row.get("average_heart_rate"))
                 if pd.notnull(row.get("average_heart_rate"))
                 else ""
             )
@@ -559,16 +574,12 @@ class AICoach:
         return "\n".join(
             [
                 f"Details for Activity {activity_id} ({row.get('activity_name', 'Run')}):",
-                f"  Distance: {dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "  Distance: N/A",
+                f"  Distance: {_fmt_dist_km(dist_m)}",
                 f"  Duration (moving): {duration}",
                 f"  Overall Pace: {overall_pace}",
                 f"  Indoor: {'Yes' if row.get('trainer') else 'No'}",
                 f"  Elevation Gain: {elev}",
-                (
-                    f"  Avg HR: {int(row['average_heart_rate'])}bpm"
-                    if pd.notnull(row.get("average_heart_rate"))
-                    else "  Avg HR: N/A"
-                ),
+                f"  Avg HR: {_fmt_hr(row.get('average_heart_rate'))}",
                 f"  Intensity (Time in Zones): {hr_analysis}",
                 f"  Aerobic Decoupling (Cardiac Drift): {decoupling}",
                 (
@@ -661,7 +672,7 @@ class AICoach:
 
         lines = [
             f"Km-by-km splits for Activity {activity_id} " f"({row.get('activity_name', 'Run')}):",
-            f"  Total: {dist_m / 1000:.2f}km | Moving time: {duration} "
+            f"  Total: {_fmt_dist_km(dist_m)} | Moving time: {duration} "
             f"| Overall pace: {overall_pace}",
             "",
         ]
@@ -729,11 +740,13 @@ class AICoach:
         for _, row in races.head(10).iterrows():
             date_str = row["activity_date"].strftime("%Y-%m-%d")
             dist_m = row.get("distance")
-            dist = f"{dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "N/A"
             time_str = (
                 _fmt_duration(row["elapsed_time"]) if pd.notnull(row.get("elapsed_time")) else "N/A"
             )
-            lines.append(f"- {date_str}: {row.get('activity_name', 'Race')} | {dist} | {time_str}")
+            lines.append(
+                f"- {date_str}: {row.get('activity_name', 'Race')} "
+                f"| {_fmt_dist_km(dist_m)} | {time_str}"
+            )
         return "\n".join(lines)
 
     def _tool_get_race_performances(self, limit: int = 5) -> str:
@@ -758,7 +771,6 @@ class AICoach:
             name = row.get("activity_name", "Race")
 
             dist_m = row.get("distance")
-            dist = f"{dist_m / 1000:.2f}km" if pd.notnull(dist_m) else "N/A"
             time_str = (
                 _fmt_duration(row["moving_time"]) if pd.notnull(row.get("moving_time")) else "N/A"
             )
@@ -768,11 +780,7 @@ class AICoach:
                 if pd.notnull(row.get("moving_time")) and pd.notnull(dist_m) and dist_m > 0
                 else "N/A"
             )
-            hr = (
-                f"{int(row['average_heart_rate'])}bpm"
-                if pd.notnull(row.get("average_heart_rate"))
-                else "N/A"
-            )
+            hr = _fmt_hr(row.get("average_heart_rate"))
 
             score_col = (
                 "suffer_score"
@@ -789,7 +797,7 @@ class AICoach:
             )
 
             lines.append(
-                f"- {date_str} '{name}' | Dist: {dist} | Time: {time_str} | "
+                f"- {date_str} '{name}' | Dist: {_fmt_dist_km(dist_m)} | Time: {time_str} | "
                 f"Pace: {pace} | HR: {hr} | Elev: {elev} | Load: {score}"
             )
         return "\n".join(lines)
@@ -976,7 +984,7 @@ class AICoach:
             cad = f" | Cad: {lap['average_cadence']:.0f}spm" if lap.get("average_cadence") else ""
             lines.append(
                 f"  Lap {lap['lap_index'] + 1}: "
-                f"{dist_m / 1000:.2f}km | {duration} | {pace}{hr}{cad}"
+                f"{_fmt_dist_km(dist_m)} | {duration} | {pace}{hr}{cad}"
             )
         return "\n".join(lines)
 
@@ -1404,7 +1412,7 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
         """Convert parsed plan JSON to a list of workout dicts for DB insertion."""
 
         def _parse_num(val):
-            if val is None or str(val).lower() in ("n/a", "none", "null", ""):
+            if val is None or str(val).lower() in INVALID_STR_VALUES:
                 return None
             try:
                 return float(val)
@@ -1415,7 +1423,7 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
         for week in plan_json.get("weeks", []):
             for w in week.get("workouts", []):
                 hr_zone = w.get("hr_zone", "")
-                if str(hr_zone).lower() in ("n/a", "none", "null"):
+                if str(hr_zone).lower() in INVALID_STR_VALUES:
                     hr_zone = None
                 workouts.append(
                     {

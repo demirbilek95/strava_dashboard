@@ -33,13 +33,14 @@ ZONE_LABELS: Dict[str, str] = {
 # Used in training_plan.py for the monthly calendar cells.
 
 WORKOUT_COLORS: Dict[str, str] = {
-    "easy_run": "#B8E0B8",  # Pastel green        – aerobic easy
-    "recovery": "#A8D8EA",  # Pastel blue         – recovery
-    "tempo": "#FECBA0",  # Pastel peach-amber  – tempo / threshold
-    "intervals": "#F5C6C6",  # Pastel pink-red     – intervals / hard effort
-    "long_run": "#B8D4F0",  # Pastel mid-blue     – long run
-    "rest": "#D0D0D0",  # Light grey          – rest
-    "cross_training": "#D4B8E8",  # Pastel purple       – cross training
+    "easy_run": "#66BB6A",  # Medium green        – aerobic easy
+    "recovery": "#42A5F5",  # Medium blue         – recovery
+    "tempo": "#FFA726",  # Amber-orange        – tempo / threshold
+    "intervals": "#EF5350",  # Vivid red           – intervals / hard effort
+    "long_run": "#26C6DA",  # Cyan                – long run (distinct from easy)
+    "rest": "#78909C",  # Blue-grey           – rest
+    "cross_training": "#AB47BC",  # Purple              – cross training
+    "strength": "#9E9E9E",  # Medium grey         – strength / weights
 }
 
 STATUS_COLORS: Dict[str, str] = {
@@ -62,6 +63,7 @@ WORKOUT_TYPE_COMPATIBLE: Dict[str, set] = {
     "long_run": {"long_run", "Run"},  # Must be long distance
     "rest": {"rest"},  # Rest is always rest
     "cross_training": {"cross_training", "Ride", "Swim", "Walk", "Hike", "Yoga"},
+    "strength": {"strength", "WeightTraining", "Workout", "CrossFit"},
 }
 
 # Minimum distance ratio: actual distance / planned distance must exceed this
@@ -144,6 +146,10 @@ BEST_EFFORT_NAMES = [
 
 # Set variant used for O(1) membership checks during import
 BEST_EFFORT_NAMES_SET = frozenset(BEST_EFFORT_NAMES)
+
+# ── Null-like string values to treat as missing ────────────────────────
+# Used when parsing LLM output or DB fields that may contain placeholder text.
+INVALID_STR_VALUES = frozenset(("n/a", "none", "null", ""))
 
 
 def classify_zone(hr: float, zones: tuple) -> str:
