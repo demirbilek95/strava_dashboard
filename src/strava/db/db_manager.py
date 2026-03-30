@@ -498,6 +498,41 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
         with self.get_connection() as conn:
             conn.execute(query, (plan_id,))
 
+    def update_planned_workout(self, workout_id: int, fields: Dict[str, Any]) -> None:
+        """Update specific editable fields of a planned workout."""
+        allowed = {
+            "workout_date",
+            "workout_type",
+            "description",
+            "target_distance_km",
+            "target_duration_min",
+            "target_pace_min_km",
+            "target_hr_zone",
+        }
+        safe = {k: v for k, v in fields.items() if k in allowed}
+        if not safe:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in safe)
+        query = f"UPDATE planned_workouts SET {set_clause} WHERE workout_id = ?"
+        with self.get_connection() as conn:
+            conn.execute(query, (*safe.values(), workout_id))
+
+    def get_adherence_by_workout_type(self, plan_id: int) -> List[Dict[str, Any]]:
+        """Return completed/total counts grouped by workout_type for a plan."""
+        rows = self.execute_query(
+            """
+            SELECT workout_type,
+                   COUNT(*)       AS total,
+                   SUM(completed) AS completed
+            FROM planned_workouts
+            WHERE plan_id = ? AND workout_type != 'rest'
+            GROUP BY workout_type
+            ORDER BY workout_type
+            """,
+            (plan_id,),
+        )
+        return [dict(r) for r in rows]
+
     def get_plan_history(self) -> List[Dict[str, Any]]:
         """Return all training plans (active + archived) ordered by creation date."""
         rows = self.execute_query(

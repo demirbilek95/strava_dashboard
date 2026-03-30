@@ -12,6 +12,37 @@ from strava.db.db_manager import DatabaseManager
 from strava.views._training_plan_calendar import _tab_calendar
 from strava.views._training_plan_generate import _get_coach, _tab_generate_plan
 
+# Strava workout_type codes
+_WT_RACE = 1
+_WT_WORKOUT = 3
+_LONG_RUN_THRESHOLD_M = 15_000
+
+
+# -- Athlete snapshot --
+
+
+def _render_athlete_snapshot(database: DatabaseManager) -> None:
+    """Auto-load and render the coach's brief once per session."""
+    if "coach_snapshot" not in st.session_state:
+        with st.spinner("Your coach is reviewing your data\u2026"):
+            try:
+                st.session_state["coach_snapshot"] = _get_coach(database).athlete_snapshot()
+            except Exception:  # pylint: disable=broad-exception-caught
+                st.session_state["coach_snapshot"] = ""
+
+    snapshot = st.session_state.get("coach_snapshot", "")
+    if not snapshot:
+        return
+
+    with st.expander("\U0001f4cb Coach\u2019s Brief \u2014 click to expand", expanded=True):
+        st.markdown(snapshot)
+
+    if st.button("\U0001f504 Refresh Brief", key="refresh_snapshot_btn"):
+        del st.session_state["coach_snapshot"]
+        st.rerun()
+
+    st.divider()
+
 
 # -- Tab 3: Feedback & Chat --
 
@@ -58,10 +89,75 @@ def _render_adherence_section(database: DatabaseManager) -> None:
         st.markdown(st.session_state["adherence_analysis"])
 
 
+def _build_activity_feedback_prompt(
+    activity_id: int, activity_label: str, dataframe: pd.DataFrame
+) -> str:
+    """Build a context-aware coaching feedback prompt based on the run type."""
+    activity_row = None
+    if not dataframe.empty and "activity_id" in dataframe.columns:
+        matches = dataframe[dataframe["activity_id"] == activity_id]
+        if not matches.empty:
+            activity_row = matches.iloc[0]
+
+    workout_type = int(activity_row.get("workout_type") or 0) if activity_row is not None else 0
+    distance_m = float(activity_row.get("distance") or 0) if activity_row is not None else 0
+
+    is_race = workout_type == _WT_RACE
+    is_interval = workout_type == _WT_WORKOUT
+    is_long_run = not is_race and not is_interval and distance_m >= _LONG_RUN_THRESHOLD_M
+
+    base = (
+        f"Give me detailed coaching feedback on this activity: {activity_label}.\n"
+        "CRITICAL: Every number you cite must come directly from a tool result "
+        "— no hallucination.\n"
+        "First call is_indoor_activity to check if this was indoors "
+        "(indoor data may be unreliable).\n\n"
+    )
+
+    if is_race:
+        return base + (
+            "This was a RACE.\n"
+            "Call get_km_splits to analyse the pacing strategy (positive or negative split?).\n"
+            "Call get_best_efforts to compare this result to all-time PRs at this distance.\n"
+            "Call get_activity_details for HR data and aerobic decoupling.\n"
+            "Assess: Was the pacing smart? How does this compare to their PR? "
+            "What does this performance tell us about current fitness and readiness?"
+        )
+
+    if is_interval:
+        return base + (
+            "This was a STRUCTURED WORKOUT (intervals or tempo).\n"
+            "Call get_activity_laps to analyse each lap — did they hit target paces? "
+            "Did effort drop off in later reps?\n"
+            "Call get_km_splits for the km-level breakdown.\n"
+            "Call get_activity_details for HR zone distribution.\n"
+            "Assess: Were the work intervals executed at Zone 4/5? "
+            "Were rest periods adequate? Name specific laps that were strong or poor."
+        )
+
+    if is_long_run:
+        return base + (
+            "This was a LONG RUN.\n"
+            "Call get_activity_details for aerobic decoupling (cardiac drift).\n"
+            "Call get_km_splits to see if pace or HR drifted in the second half.\n"
+            "Assess: Did they stay in Zone 2 throughout? "
+            "Was cardiac drift > 5% (concerning)? Did they start too fast? "
+            "How sustainable was the effort over the full distance?"
+        )
+
+    return base + (
+        "This was likely an EASY or RECOVERY RUN.\n"
+        "Call get_activity_details to check HR zone distribution — was this truly Zone 2?\n"
+        "Call get_km_splits to check pace consistency.\n"
+        "Assess: Did they stay disciplined in Zone 2, or did HR creep into Zone 3/4? "
+        "Was the pace appropriate for the HR? Any concerning drift towards the end?"
+    )
+
+
 def _render_activity_selector(dataframe: pd.DataFrame) -> None:
     """Render activity selector for detailed per-activity coaching feedback."""
     st.markdown("### \U0001f50d Activity Feedback")
-    st.caption("Get detailed per-km coaching feedback on a recent activity.")
+    st.caption("Get detailed, data-driven coaching feedback on a recent activity.")
     if "activity_date" not in dataframe.columns:
         return
     recent = dataframe.sort_values(by="activity_date", ascending=False).head(20)
@@ -70,7 +166,7 @@ def _render_activity_selector(dataframe: pd.DataFrame) -> None:
         act_name = row.get("activity_name", "Activity")
         act_id = row["activity_id"]
         if pd.notnull(row["activity_date"]):
-            label = f"{row['activity_date'].strftime('%Y-%m-%d')} - " f"{act_name} (ID: {act_id})"
+            label = f"{row['activity_date'].strftime('%Y-%m-%d')} - {act_name} (ID: {act_id})"
         else:
             label = f"Unknown date - {act_name} (ID: {act_id})"
         options.append(label)
@@ -78,21 +174,9 @@ def _render_activity_selector(dataframe: pd.DataFrame) -> None:
     if selected_activity:
         match = re.search(r"\(ID: (\d+)\)$", selected_activity)
         if match and st.button("Get Coaching Feedback", key="detailed_feedback_btn"):
-            st.session_state["pending_feedback_prompt"] = (
-                "Please give me detailed coaching feedback on this specific "
-                f"activity: {selected_activity}. "
-                "Your feedback MUST NOT be static or generic. "
-                "Analyze the exact numbers using get_km_splits and "
-                "get_activity_details. "
-                "If this was an easy run, did I actually stay in Zone 2? "
-                "If it was a workout/interval session, did I hit the required "
-                "paces and Zone 4/5? "
-                "If it was a long run, was there aerobic decoupling (cardiac "
-                "drift) later in the run? "
-                "Provide a solid, unique critique based on the exact type of "
-                "run and my execution of it. "
-                "CRITICAL: Do NOT hallucinate data. "
-                "Quote the exact numbers from the tools."
+            activity_id = int(match.group(1))
+            st.session_state["pending_feedback_prompt"] = _build_activity_feedback_prompt(
+                activity_id, selected_activity, dataframe
             )
 
 
@@ -227,6 +311,7 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
 
     database.create_tables()
     _sync_planned_workouts_with_activities(database, dataframe)
+    _render_athlete_snapshot(database)
 
     tab_names = [
         "\U0001f4dd Create / Adapt Plan",

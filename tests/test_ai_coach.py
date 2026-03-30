@@ -1,11 +1,16 @@
-"""Tests for AICoach pace helpers, km splits, and plan parsing."""
+"""Tests for AICoach pace helpers, km splits, plan parsing, and new tools."""
+
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
 
 from strava.utils.ai_coach import (
     AICoach,
     _fmt_pace,
+    _fmt_duration,
     _pace_from_speed_ms,
     _pace_from_time_dist,
-    _fmt_duration,
 )
 
 
@@ -237,3 +242,183 @@ def test_plan_json_to_workouts_null_values():
 def test_plan_json_to_workouts_empty():
     assert AICoach.plan_json_to_workouts(plan_id=1, plan_json={}) == []
     assert AICoach.plan_json_to_workouts(plan_id=1, plan_json={"weeks": []}) == []
+
+
+# ── Fixture: mocked AICoach instance ──────────────────────────────
+
+
+@pytest.fixture
+def mock_coach():
+    """AICoach with mocked Gemini client and a MagicMock database."""
+    with (
+        patch("strava.utils.ai_coach.genai.Client"),
+        patch("strava.utils.ai_coach.load_dotenv"),
+        patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
+    ):
+        db = MagicMock()
+        db.get_pr_summary.return_value = []
+        db.get_plan_history.return_value = []
+        db.get_adherence_by_workout_type.return_value = []
+        coach = AICoach(database=db, hr_zones=[145, 164, 174, 188])
+    return coach
+
+
+# ── get_best_efforts tests ─────────────────────────────────────────
+
+
+def test_get_best_efforts_empty(mock_coach):
+    """No PR data should return a helpful message."""
+    mock_coach.db.get_pr_summary.return_value = []
+    result = mock_coach._tool_get_best_efforts()
+    assert "No best effort" in result
+
+
+def test_get_best_efforts_with_data(mock_coach):
+    """PRs are formatted with name, time, pace, and date."""
+    mock_coach.db.get_pr_summary.return_value = [
+        {
+            "effort_name": "5k",
+            "distance": 5000.0,
+            "elapsed_time": 1200,  # 20:00 → 4:00/km
+            "moving_time": 1200,
+            "average_heartrate": 172.0,
+            "activity_date": "2025-11-10T09:00:00Z",
+            "activity_name": "5K Race",
+        }
+    ]
+    result = mock_coach._tool_get_best_efforts()
+    assert "5k" in result
+    assert "20:00" in result
+    assert "4:00/km" in result
+    assert "172bpm" in result
+
+
+# ── get_activity_laps tests ────────────────────────────────────────
+
+
+def test_get_activity_laps_not_found(mock_coach):
+    """Unknown activity_id returns a not-found message."""
+    mock_coach._activities_df = pd.DataFrame()
+    result = mock_coach._tool_get_activity_laps(activity_id=99999)
+    assert "not found" in result.lower()
+
+
+def test_get_activity_laps_no_laps(mock_coach):
+    """Activity with no lap records returns an informative message."""
+    mock_coach._activities_df = pd.DataFrame([{"activity_id": 1, "activity_name": "Morning Run"}])
+    mock_coach.db.get_activity_laps.return_value = []
+    result = mock_coach._tool_get_activity_laps(activity_id=1)
+    assert "No lap data" in result
+
+
+def test_get_activity_laps_with_data(mock_coach):
+    """Lap data is formatted with distance, pace, and HR."""
+    mock_coach._activities_df = pd.DataFrame(
+        [{"activity_id": 1, "activity_name": "Interval Session"}]
+    )
+    mock_coach.db.get_activity_laps.return_value = [
+        {
+            "lap_index": 0,
+            "distance": 1000.0,
+            "moving_time": 240,  # 4:00/km
+            "elapsed_time": 240,
+            "average_heartrate": 180.0,
+            "average_cadence": 185.0,
+            "average_speed": 4.17,
+        },
+        {
+            "lap_index": 1,
+            "distance": 1000.0,
+            "moving_time": 250,
+            "elapsed_time": 250,
+            "average_heartrate": 182.0,
+            "average_cadence": 184.0,
+            "average_speed": 4.0,
+        },
+    ]
+    result = mock_coach._tool_get_activity_laps(activity_id=1)
+    assert "2 lap(s)" in result
+    assert "Lap 1" in result
+    assert "Lap 2" in result
+    assert "180bpm" in result
+
+
+# ── get_fitness_trend tests ────────────────────────────────────────
+
+
+def _make_activities_df(month_offsets_km: list) -> pd.DataFrame:
+    """Build a synthetic activities DataFrame with one row per month entry."""
+    rows = []
+    base = pd.Timestamp.now(tz="UTC")
+    for weeks_back, km in month_offsets_km:
+        rows.append(
+            {
+                "activity_id": len(rows) + 1,
+                "activity_date": base - pd.Timedelta(weeks=weeks_back),
+                "distance": km * 1000,
+                "average_heart_rate": 155.0,
+                "suffer_score": km * 2,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def test_get_fitness_trend_empty(mock_coach):
+    """No activities returns a helpful message."""
+    mock_coach._activities_df = pd.DataFrame()
+    result = mock_coach._tool_get_fitness_trend()
+    assert "No activities" in result
+
+
+def test_get_fitness_trend_with_data(mock_coach):
+    """Monthly breakdown is included in output."""
+    mock_coach._activities_df = _make_activities_df([(1, 10), (3, 12), (5, 8)])
+    result = mock_coach._tool_get_fitness_trend()
+    assert "Monthly fitness trend" in result
+    assert "km" in result
+
+
+def test_get_fitness_trend_building(mock_coach):
+    """Trend shows BUILDING when recent month volume is > 10% higher than previous."""
+    mock_coach._activities_df = _make_activities_df(
+        [(1, 50), (1, 50), (5, 30), (5, 30)]  # recent ~100km vs older ~60km
+    )
+    result = mock_coach._tool_get_fitness_trend()
+    assert "BUILDING" in result
+
+
+# ── get_plan_adherence tests ───────────────────────────────────────
+
+
+def test_get_plan_adherence_no_plans(mock_coach):
+    """No plans returns an informative message."""
+    mock_coach.db.get_plan_history.return_value = []
+    result = mock_coach._tool_get_plan_adherence()
+    assert "No training plans" in result
+
+
+def test_get_plan_adherence_with_breakdown(mock_coach):
+    """Adherence breakdown by workout type is included in output."""
+    mock_coach.db.get_plan_history.return_value = [
+        {
+            "plan_id": 1,
+            "goal": "Sub-4 marathon",
+            "start_date": "2026-01-01",
+            "end_date": "2026-03-01",
+            "status": "active",
+            "workout_count": 20,
+            "completed_count": 14,
+        }
+    ]
+    mock_coach.db.get_adherence_by_workout_type.return_value = [
+        {"workout_type": "easy_run", "total": 12, "completed": 11},
+        {"workout_type": "intervals", "total": 8, "completed": 3},
+    ]
+    result = mock_coach._tool_get_plan_adherence()
+    assert "Sub-4 marathon" in result
+    assert "Easy Run" in result
+    assert "Intervals" in result
+    # Good adherence on easy runs → green tick
+    assert "✅" in result
+    # Poor adherence on intervals → red cross
+    assert "❌" in result

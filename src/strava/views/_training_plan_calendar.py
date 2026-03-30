@@ -2,12 +2,13 @@
 
 import calendar
 import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
 
 from strava.constants import ACTIVITY_TYPE_COLORS, WORKOUT_COLORS
+from strava.db.db_manager import DatabaseManager
 from strava.utils.ai_coach import AICoach
 
 _CALENDAR_CSS = """
@@ -233,7 +234,121 @@ def _render_weekly_breakdown(workouts: list) -> None:
         )
 
 
-def _tab_calendar(database, dataframe: pd.DataFrame) -> None:
+_EDITABLE_WORKOUT_TYPES: List[str] = [
+    "easy_run",
+    "tempo",
+    "intervals",
+    "long_run",
+    "rest",
+    "cross_training",
+    "recovery",
+]
+
+
+def _render_edit_table(database: DatabaseManager, workouts: List[Dict[str, Any]]) -> None:
+    """Render an inline-editable table for upcoming workouts (next 14 days)."""
+    today = datetime.date.today()
+    cutoff = today + datetime.timedelta(days=14)
+
+    upcoming: List[Dict[str, Any]] = [
+        w
+        for w in workouts
+        if today.isoformat() <= w["workout_date"] <= cutoff.isoformat() and not w.get("completed")
+    ]
+
+    if not upcoming:
+        st.info("No upcoming workouts in the next 14 days to edit.")
+        return
+
+    rows = [
+        {
+            "Date": w["workout_date"],
+            "Type": w.get("workout_type", "rest"),
+            "Description": w.get("description") or "",
+            "Distance (km)": w.get("target_distance_km"),
+            "Duration (min)": w.get("target_duration_min"),
+            "Pace (min/km)": w.get("target_pace_min_km"),
+            "HR Zone": w.get("target_hr_zone") or "",
+        }
+        for w in upcoming
+    ]
+    orig_df = pd.DataFrame(rows)
+
+    edited_df = st.data_editor(
+        orig_df,
+        column_config={
+            "Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
+            "Type": st.column_config.SelectboxColumn(
+                "Type", options=_EDITABLE_WORKOUT_TYPES, required=True
+            ),
+            "Description": st.column_config.TextColumn("Description", max_chars=200),
+            "Distance (km)": st.column_config.NumberColumn(
+                "Distance (km)", format="%.1f", min_value=0.0
+            ),
+            "Duration (min)": st.column_config.NumberColumn(
+                "Duration (min)", format="%d", min_value=0
+            ),
+            "Pace (min/km)": st.column_config.NumberColumn(
+                "Pace (min/km)",
+                format="%.2f",
+                min_value=0.0,
+                help="Decimal minutes per km (e.g. 6.5 = 6:30/km)",
+            ),
+            "HR Zone": st.column_config.TextColumn("HR Zone", max_chars=20),
+        },
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        key="edit_workouts_table",
+    )
+
+    if st.button("\U0001f4be Save Changes", key="save_workout_edits", type="primary"):
+        _save_workout_edits(database, upcoming, edited_df)
+
+
+def _parse_float_or_none(val: Any) -> Optional[float]:
+    """Convert a value to float, returning None for missing/NaN."""
+    if val is None:
+        return None
+    if isinstance(val, float) and pd.isna(val):
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def _save_workout_edits(
+    database: DatabaseManager,
+    upcoming: List[Dict[str, Any]],
+    edited_df: pd.DataFrame,
+) -> None:
+    """Persist edits from the data_editor back to the database."""
+    for i, row in edited_df.iterrows():
+        workout_id = upcoming[i]["workout_id"]
+
+        date_val = row["Date"]
+        date_str = date_val.isoformat() if hasattr(date_val, "isoformat") else str(date_val)
+
+        hr_zone = str(row["HR Zone"]).strip() if row.get("HR Zone") else None
+        description = str(row["Description"]).strip() if row.get("Description") else ""
+
+        fields: Dict[str, Any] = {
+            "workout_date": date_str,
+            "workout_type": str(row["Type"]) if row.get("Type") else "rest",
+            "description": description,
+            "target_distance_km": _parse_float_or_none(row.get("Distance (km)")),
+            "target_duration_min": _parse_float_or_none(row.get("Duration (min)")),
+            "target_pace_min_km": _parse_float_or_none(row.get("Pace (min/km)")),
+            "target_hr_zone": hr_zone if hr_zone else None,
+        }
+        database.update_planned_workout(workout_id, fields)
+
+    st.success("\u2705 Changes saved!")
+    st.rerun()
+
+
+def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame) -> None:
     """Calendar tab showing planned workouts and actual activities."""
     plan = database.get_active_plan()
     using_draft = False
@@ -275,6 +390,14 @@ def _tab_calendar(database, dataframe: pd.DataFrame) -> None:
     _render_calendar(year, month, plan["workouts"], dataframe)
 
     st.markdown("---")
+    if not using_draft:
+        with st.expander("\u270f\ufe0f Edit Upcoming Workouts", expanded=False):
+            st.caption(
+                "Edit the date, type, or targets for any upcoming workout. "
+                "Changes are saved directly to your plan."
+            )
+            _render_edit_table(database, plan["workouts"])
+
     legend_items = [
         ("● Easy Run", WORKOUT_COLORS["easy_run"]),
         ("● Long Run", WORKOUT_COLORS["long_run"]),
