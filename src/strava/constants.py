@@ -33,13 +33,13 @@ ZONE_LABELS: Dict[str, str] = {
 # Used in training_plan.py for the monthly calendar cells.
 
 WORKOUT_COLORS: Dict[str, str] = {
-    "easy_run": "#B8E0B8",  # Pastel green   – mirrors Z2 aerobic
-    "recovery": "#A8D8EA",  # Pastel blue    – mirrors Z1 recovery
-    "tempo": "#F5A742",  # Pastel amber   – mirrors Z4 threshold
-    "intervals": "#F4A0A0",  # Pastel red     – mirrors Z5 max effort
-    "long_run": "#B8D4F0",  # Pastel mid-blue – aerobic long
-    "rest": "#D0D0D0",  # Light grey     – rest
-    "cross_training": "#D4B8E8",  # Pastel purple – cross training
+    "easy_run": "#B8E0B8",  # Pastel green        – aerobic easy
+    "recovery": "#A8D8EA",  # Pastel blue         – recovery
+    "tempo": "#FECBA0",  # Pastel peach-amber  – tempo / threshold
+    "intervals": "#F5C6C6",  # Pastel pink-red     – intervals / hard effort
+    "long_run": "#B8D4F0",  # Pastel mid-blue     – long run
+    "rest": "#D0D0D0",  # Light grey          – rest
+    "cross_training": "#D4B8E8",  # Pastel purple       – cross training
 }
 
 STATUS_COLORS: Dict[str, str] = {
