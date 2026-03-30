@@ -178,6 +178,9 @@ def _render_activity_selector(dataframe: pd.DataFrame) -> None:
             st.session_state["pending_feedback_prompt"] = _build_activity_feedback_prompt(
                 activity_id, selected_activity, dataframe
             )
+            st.session_state["pending_feedback_label"] = (
+                f"Give me coaching feedback on: {selected_activity}"
+            )
 
 
 def _render_coaching_chat(database: DatabaseManager) -> None:
@@ -197,15 +200,22 @@ def _render_coaching_chat(database: DatabaseManager) -> None:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-    prompt = st.chat_input("Ask your coach anything...", key="feedback_chat_input")
+    typed_prompt = st.chat_input("Ask your coach anything...", key="feedback_chat_input")
+
+    prompt = None
+    display_label = None
     if st.session_state.get("pending_feedback_prompt"):
         prompt = st.session_state.pop("pending_feedback_prompt")
+        display_label = st.session_state.pop("pending_feedback_label", prompt)
+    elif typed_prompt:
+        prompt = typed_prompt
+        display_label = typed_prompt
 
     if prompt:
-        st.session_state["feedback_history"].append({"role": "user", "content": prompt})
+        st.session_state["feedback_history"].append({"role": "user", "content": display_label})
         with chat_container:
             with st.chat_message("user"):
-                st.markdown(prompt)
+                st.markdown(display_label)
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     coach = _get_coach(database)

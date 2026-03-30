@@ -355,22 +355,50 @@ class AICoach:
         return sdf
 
     def _hr_zone_breakdown(self, sdf: pd.DataFrame) -> str:
-        """Compute time-in-HR-zone percentages from a stream DataFrame."""
+        """Compute time-in-HR-zone percentages from a stream DataFrame.
+
+        Uses elapsed-time weighting (seconds between rows) and exclusive upper
+        boundaries to match the Deep Dive view exactly.
+        """
         if "heart_rate" not in sdf.columns or sdf["heart_rate"].isnull().all():
             return "No heart rate data available."
+        if "elapsed_seconds" not in sdf.columns:
+            return "No elapsed time data available."
+
         z1, z2, z3, z4 = self.hr_zones
-        hr = sdf["heart_rate"].dropna()
-        total = len(hr)
-        if total == 0:
+        df = sdf[["elapsed_seconds", "heart_rate"]].dropna().copy()
+        if df.empty:
             return "No heart rate data available."
-        counts = {
-            "Z1 (Recovery)": (hr <= z1).sum(),
-            "Z2 (Aerobic)": ((hr > z1) & (hr <= z2)).sum(),
-            "Z3 (Tempo)": ((hr > z2) & (hr <= z3)).sum(),
-            "Z4 (Threshold)": ((hr > z3) & (hr <= z4)).sum(),
-            "Z5 (Red Line)": (hr > z4).sum(),
-        }
-        return " | ".join(f"{zone}: {count / total * 100:.1f}%" for zone, count in counts.items())
+
+        df["time_diff"] = df["elapsed_seconds"].diff().fillna(0).clip(lower=0)
+        total_time = df["time_diff"].sum()
+        if total_time <= 0:
+            return "No heart rate data available."
+
+        def _zone_idx(h: float) -> int:
+            if h < z1:
+                return 0
+            if h < z2:
+                return 1
+            if h < z3:
+                return 2
+            if h < z4:
+                return 3
+            return 4
+
+        df["zone"] = df["heart_rate"].apply(_zone_idx)
+        zone_labels = [
+            "Z1 (Recovery)",
+            "Z2 (Aerobic)",
+            "Z3 (Tempo)",
+            "Z4 (Threshold)",
+            "Z5 (Red Line)",
+        ]
+        parts = []
+        for i, label in enumerate(zone_labels):
+            zone_time = df[df["zone"] == i]["time_diff"].sum()
+            parts.append(f"{label}: {zone_time / total_time * 100:.1f}%")
+        return " | ".join(parts)
 
     @staticmethod
     def _km_bucket_stats(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
