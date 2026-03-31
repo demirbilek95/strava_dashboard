@@ -100,8 +100,10 @@ def _build_activity_feedback_prompt(
         if not matches.empty:
             activity_row = matches.iloc[0]
 
-    workout_type = int(activity_row.get("workout_type") or 0) if activity_row is not None else 0
-    distance_m = float(activity_row.get("distance") or 0) if activity_row is not None else 0
+    _wt = activity_row.get("workout_type") if activity_row is not None else None
+    workout_type = 0 if _wt is None or pd.isna(_wt) else int(_wt)
+    _dist = activity_row.get("distance") if activity_row is not None else None
+    distance_m = 0.0 if _dist is None or pd.isna(_dist) else float(_dist)
 
     is_race = workout_type == _WT_RACE
     is_interval = workout_type == _WT_WORKOUT
