@@ -692,6 +692,69 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
         )
         return [dict(r) for r in rows]
 
+    def restore_last_archived_plan(self) -> bool:
+        """Re-activate the most recently archived plan; archive the current active one.
+
+        Returns True if a plan was restored, False if no archived plan exists.
+        """
+        athlete_filter = "AND athlete_id = ?" if self.athlete_id is not None else ""
+        params = (self.athlete_id,) if self.athlete_id is not None else ()
+        rows = self.execute_query(
+            f"""
+            SELECT plan_id FROM training_plans
+            WHERE status = 'archived' {athlete_filter}
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            params,
+        )
+        if not rows:
+            return False
+        restore_id = rows[0]["plan_id"]
+        with self.get_connection() as conn:
+            conn.execute(
+                f"UPDATE training_plans SET status = 'archived', updated_at = CURRENT_TIMESTAMP "
+                f"WHERE status = 'active' {athlete_filter}",
+                params,
+            )
+            conn.execute(
+                "UPDATE training_plans SET status = 'active', updated_at = CURRENT_TIMESTAMP "
+                "WHERE plan_id = ?",
+                (restore_id,),
+            )
+        return True
+
+    def replace_future_workouts(self, plan_id: int, workouts: List[Dict[str, Any]]) -> None:
+        """Replace incomplete future workouts; preserve past and completed workouts.
+
+        Deletes all uncompleted workouts from today onwards, then inserts the
+        provided workouts whose date is >= today.  Completed workouts are never
+        touched regardless of their date.
+        """
+        import datetime as _dt  # pylint: disable=import-outside-toplevel
+
+        today = _dt.date.today().isoformat()
+        with self.get_connection() as conn:
+            conn.execute(
+                "DELETE FROM planned_workouts "
+                "WHERE plan_id = ? AND completed = 0 AND workout_date >= ?",
+                (plan_id, today),
+            )
+        future = [w for w in workouts if w.get("workout_date", "") >= today]
+        if future:
+            self.insert_planned_workouts(future)
+
+    def update_plan_metadata(
+        self, plan_id: int, end_date: Optional[str], raw_llm_response: str
+    ) -> None:
+        """Update end_date and raw_llm_response for an existing plan."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE training_plans "
+                "SET end_date = ?, raw_llm_response = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE plan_id = ?",
+                (end_date, raw_llm_response, plan_id),
+            )
+
     def get_plan_history(self) -> List[Dict[str, Any]]:
         """Return all training plans (active + archived) ordered by creation date."""
         if self.athlete_id is not None:

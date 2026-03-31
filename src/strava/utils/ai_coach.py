@@ -1362,14 +1362,17 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
     @staticmethod
     def _plan_to_json_str(plan: Dict[str, Any]) -> str:
         """Convert an active plan dict (from DB) into a JSON string for prompts."""
-        workouts_by_week: Dict[int, list] = defaultdict(list)
+        workouts_by_week: Dict[tuple, list] = defaultdict(list)
         for w in plan.get("workouts", []):
             w_date = w.get("workout_date")
             if not w_date:
                 continue
             try:
                 dt = datetime.date.fromisoformat(w_date)
-                workouts_by_week[dt.isocalendar()[1]].append(w)
+                iso = dt.isocalendar()
+                workouts_by_week[(iso[0], iso[1])].append(
+                    w
+                )  # (year, week) preserves cross-year order
             except ValueError:
                 pass
 
