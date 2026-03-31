@@ -1041,19 +1041,24 @@ class AICoach:
         if not plans:
             return "No training plans found. This athlete has not used a structured plan yet."
 
-        lines = ["Training plan adherence by workout type:"]
+        lines = ["Training plan adherence by workout type (past workouts only):"]
         for plan in plans[:3]:
             plan_id = plan["plan_id"]
             status = plan["status"].upper()
-            total = plan.get("workout_count", 0)
-            done = plan.get("completed_count", 0)
-            overall_pct = int(done / total * 100) if total > 0 else 0
+            by_type = self.db.get_adherence_by_workout_type(plan_id)
+            # Derive overall from past-only rows so future workouts don't deflate the score.
+            past_total = sum(r["total"] for r in by_type)
+            past_done = sum(r["completed"] for r in by_type)
+            if past_total == 0:
+                overall_str = "Plan just started — no past workouts to assess yet."
+            else:
+                overall_pct = int(past_done / past_total * 100)
+                overall_str = f"Overall: {overall_pct}% ({past_done}/{past_total} past workouts)"
             lines.append(
                 f"\n[{status}] \"{plan['goal']}\" "
                 f"({plan['start_date']} → {plan.get('end_date', 'ongoing')}) "
-                f"— Overall: {overall_pct}% ({done}/{total})"
+                f"— {overall_str}"
             )
-            by_type = self.db.get_adherence_by_workout_type(plan_id)
             if by_type:
                 for row in by_type:
                     pct = int(row["completed"] / row["total"] * 100) if row["total"] > 0 else 0
@@ -1062,8 +1067,6 @@ class AICoach:
                         f"  {status_icon} {row['workout_type'].replace('_', ' ').title()}: "
                         f"{row['completed']}/{row['total']} ({pct}%)"
                     )
-            else:
-                lines.append("  No workout type breakdown available.")
 
         return "\n".join(lines)
 

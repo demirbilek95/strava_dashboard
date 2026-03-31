@@ -671,14 +671,20 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
             conn.execute(query, (*safe.values(), workout_id))
 
     def get_adherence_by_workout_type(self, plan_id: int) -> List[Dict[str, Any]]:
-        """Return completed/total counts grouped by workout_type for a plan."""
+        """Return completed/total counts grouped by workout_type for past workouts only.
+
+        Only workouts whose date is strictly before today are included so that
+        future sessions do not deflate adherence on a plan that just started.
+        """
         rows = self.execute_query(
             """
             SELECT workout_type,
                    COUNT(*)       AS total,
                    SUM(completed) AS completed
             FROM planned_workouts
-            WHERE plan_id = ? AND workout_type != 'rest'
+            WHERE plan_id = ?
+              AND workout_type != 'rest'
+              AND workout_date < date('now')
             GROUP BY workout_type
             ORDER BY workout_type
             """,
