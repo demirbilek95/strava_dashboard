@@ -21,4 +21,5 @@ SELECT
 FROM training_plans p
 LEFT JOIN planned_workouts w ON p.plan_id = w.plan_id
 WHERE p.status = 'active'
+  AND (? IS NULL OR p.athlete_id = ?)
 ORDER BY p.created_at DESC, w.workout_date ASC;

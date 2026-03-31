@@ -33,4 +33,5 @@ SELECT DISTINCT
     a.filename
 FROM activities a
 INNER JOIN activity_streams s ON a.activity_id = s.activity_id
+WHERE (? IS NULL OR a.athlete_id = ?)
 ORDER BY a.activity_date DESC

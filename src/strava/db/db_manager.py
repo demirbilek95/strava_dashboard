@@ -2,6 +2,7 @@
 
 # pylint: disable=too-many-lines
 
+import os
 import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
@@ -12,12 +13,13 @@ import pandas as pd
 class DatabaseManager:  # pylint: disable=too-many-public-methods
     """Manages SQLite database connections and operations for Strava data."""
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None, athlete_id: Optional[int] = None):
         """
         Initialize database manager.
 
         Args:
             db_path: Path to SQLite database file. If None, uses default location.
+            athlete_id: When set, scopes all queries to this user.
         """
         if db_path is None:
             # Default to data/strava.db
@@ -27,6 +29,9 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
 
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.athlete_id = athlete_id  # When set, scopes all queries to this user
+        self._turso_url = os.getenv("TURSO_DATABASE_URL")
+        self._turso_token = os.getenv("TURSO_AUTH_TOKEN")
         # Ensure schema is up to date
         if self.db_path.exists():
             self._migrate_schema()
@@ -37,10 +42,18 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
         Context manager for database connections.
 
         Yields:
-            sqlite3.Connection: Database connection
+            Connection: Database connection
         """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row  # Enable column access by name
+        if self._turso_url and self._turso_token:
+            import libsql_experimental as libsql  # pylint: disable=import-outside-toplevel,import-error
+
+            conn = libsql.connect(
+                str(self.db_path), sync_url=self._turso_url, auth_token=self._turso_token
+            )
+            conn.sync()
+        else:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row  # Enable column access by name
         try:
             yield conn
             conn.commit()
@@ -162,10 +175,37 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
                     "ON activity_best_efforts(effort_name, activity_id)"
                 )
 
+                # Ensure users table exists for multi-user token storage.
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS users (
+                        athlete_id    INTEGER PRIMARY KEY,
+                        access_token  TEXT NOT NULL,
+                        refresh_token TEXT NOT NULL,
+                        expires_at    INTEGER NOT NULL DEFAULT 0,
+                        scope         TEXT,
+                        created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+
+                # Add athlete_id to activities if missing.
+                activities_cols = self.execute_query("PRAGMA table_info(activities)")
+                activities_col_names = [c["name"] for c in activities_cols]
+                if "athlete_id" not in activities_col_names:
+                    conn.execute("ALTER TABLE activities ADD COLUMN athlete_id INTEGER")
+
+                # Add athlete_id to training_plans if missing.
+                plans_cols = self.execute_query("PRAGMA table_info(training_plans)")
+                plans_col_names = [c["name"] for c in plans_cols]
+                if "athlete_id" not in plans_col_names:
+                    conn.execute("ALTER TABLE training_plans ADD COLUMN athlete_id INTEGER")
+
         except Exception as exc:  # pylint: disable=broad-exception-caught
             print(f"! Migration check failed: {exc}")
 
-    def execute_query(self, query: str, params: tuple = ()) -> List[sqlite3.Row]:
+    def execute_query(self, query: str, params: tuple = ()) -> List[dict]:
         """
         Execute a SELECT query and return results.
 
@@ -174,12 +214,19 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
             params: Query parameters
 
         Returns:
-            List of result rows
+            List of result rows as dicts (or sqlite3.Row objects for local SQLite)
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
-            return cursor.fetchall()
+            raw = cursor.fetchall()
+            if not raw:
+                return []
+            # sqlite3.Row supports dict() conversion; libsql returns plain tuples
+            if isinstance(raw[0], sqlite3.Row):
+                return raw
+            cols = [d[0] for d in cursor.description]
+            return [dict(zip(cols, row)) for row in raw]
 
     def execute_many(self, query: str, params_list: List[tuple]):
         """
@@ -203,6 +250,8 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
         Returns:
             Activity ID
         """
+        if self.athlete_id is not None:
+            activity_data = {**activity_data, "athlete_id": self.athlete_id}
         columns = ", ".join(activity_data.keys())
         placeholders = ", ".join(["?" for _ in activity_data])
         query = f"INSERT OR REPLACE INTO activities ({columns}) VALUES ({placeholders})"
@@ -235,7 +284,13 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
 
     def get_activity_count(self) -> int:
         """Get total number of activities."""
-        result = self.execute_query("SELECT COUNT(*) as count FROM activities")
+        if self.athlete_id is not None:
+            result = self.execute_query(
+                "SELECT COUNT(*) as count FROM activities WHERE athlete_id = ?",
+                (self.athlete_id,),
+            )
+        else:
+            result = self.execute_query("SELECT COUNT(*) as count FROM activities")
         return result[0]["count"] if result else 0
 
     def get_setting(self, key: str) -> Optional[str]:
@@ -254,9 +309,20 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
 
     def get_activities_with_streams_count(self) -> int:
         """Get number of activities that have stream data."""
-        result = self.execute_query(
-            "SELECT COUNT(DISTINCT activity_id) as count FROM activity_streams"
-        )
+        if self.athlete_id is not None:
+            result = self.execute_query(
+                """
+                SELECT COUNT(DISTINCT s.activity_id) as count
+                FROM activity_streams s
+                JOIN activities a ON s.activity_id = a.activity_id
+                WHERE a.athlete_id = ?
+                """,
+                (self.athlete_id,),
+            )
+        else:
+            result = self.execute_query(
+                "SELECT COUNT(DISTINCT activity_id) as count FROM activity_streams"
+            )
         return result[0]["count"] if result else 0
 
     def activity_has_streams(self, activity_id: int) -> bool:
@@ -273,7 +339,13 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
         Returns:
             Unix timestamp (int) or None if no activities exist.
         """
-        result = self.execute_query("SELECT MAX(activity_date) as latest FROM activities")
+        if self.athlete_id is not None:
+            result = self.execute_query(
+                "SELECT MAX(activity_date) as latest FROM activities WHERE athlete_id = ?",
+                (self.athlete_id,),
+            )
+        else:
+            result = self.execute_query("SELECT MAX(activity_date) as latest FROM activities")
         if result and result[0]["latest"]:
             try:
                 # Strava dates are ISO strings, e.g., "2018-02-16T14:52:54Z"
@@ -375,40 +447,71 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
 
     def get_pr_summary(self) -> List[Dict[str, Any]]:
         """Return the all-time PR (rank 1) for each standard effort distance."""
-        rows = self.execute_query(
-            """
-            SELECT be.effort_name, be.distance, be.elapsed_time, be.moving_time,
-                   be.average_heartrate, be.max_heartrate,
-                   a.activity_date, a.activity_name, a.activity_id, a.workout_type
-            FROM activity_best_efforts be
-            JOIN activities a ON be.activity_id = a.activity_id
-            WHERE be.pr_rank = 1
-            ORDER BY be.distance
-            """
-        )
+        if self.athlete_id is not None:
+            rows = self.execute_query(
+                """
+                SELECT be.effort_name, be.distance, be.elapsed_time, be.moving_time,
+                       be.average_heartrate, be.max_heartrate,
+                       a.activity_date, a.activity_name, a.activity_id, a.workout_type
+                FROM activity_best_efforts be
+                JOIN activities a ON be.activity_id = a.activity_id
+                WHERE be.pr_rank = 1 AND a.athlete_id = ?
+                ORDER BY be.distance
+                """,
+                (self.athlete_id,),
+            )
+        else:
+            rows = self.execute_query(
+                """
+                SELECT be.effort_name, be.distance, be.elapsed_time, be.moving_time,
+                       be.average_heartrate, be.max_heartrate,
+                       a.activity_date, a.activity_name, a.activity_id, a.workout_type
+                FROM activity_best_efforts be
+                JOIN activities a ON be.activity_id = a.activity_id
+                WHERE be.pr_rank = 1
+                ORDER BY be.distance
+                """
+            )
         return [dict(r) for r in rows]
 
     def get_best_efforts_history(self, effort_name: str, limit: int = 20) -> List[Dict[str, Any]]:
         """Return chronological best efforts for a named standard distance."""
-        rows = self.execute_query(
-            """
-            SELECT be.effort_name, be.distance, be.elapsed_time, be.moving_time,
-                   be.pr_rank, be.average_heartrate, a.activity_date, a.activity_name,
-                   a.activity_id
-            FROM activity_best_efforts be
-            JOIN activities a ON be.activity_id = a.activity_id
-            WHERE be.effort_name = ?
-            ORDER BY a.activity_date DESC
-            LIMIT ?
-            """,
-            (effort_name, limit),
-        )
+        if self.athlete_id is not None:
+            rows = self.execute_query(
+                """
+                SELECT be.effort_name, be.distance, be.elapsed_time, be.moving_time,
+                       be.pr_rank, be.average_heartrate, a.activity_date, a.activity_name,
+                       a.activity_id
+                FROM activity_best_efforts be
+                JOIN activities a ON be.activity_id = a.activity_id
+                WHERE be.effort_name = ? AND a.athlete_id = ?
+                ORDER BY a.activity_date DESC
+                LIMIT ?
+                """,
+                (effort_name, self.athlete_id, limit),
+            )
+        else:
+            rows = self.execute_query(
+                """
+                SELECT be.effort_name, be.distance, be.elapsed_time, be.moving_time,
+                       be.pr_rank, be.average_heartrate, a.activity_date, a.activity_name,
+                       a.activity_id
+                FROM activity_best_efforts be
+                JOIN activities a ON be.activity_id = a.activity_id
+                WHERE be.effort_name = ?
+                ORDER BY a.activity_date DESC
+                LIMIT ?
+                """,
+                (effort_name, limit),
+            )
         return [dict(r) for r in rows]
 
     # ── Training Plan Methods ──────────────────────────────────────────
 
     def insert_training_plan(self, plan_data: Dict[str, Any]) -> int:
         """Insert a training plan and return its plan_id."""
+        if self.athlete_id is not None:
+            plan_data = {**plan_data, "athlete_id": self.athlete_id}
         columns = ", ".join(plan_data.keys())
         placeholders = ", ".join(["?" for _ in plan_data])
         query = f"INSERT INTO training_plans ({columns}) VALUES ({placeholders})"
@@ -434,7 +537,7 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
     def get_active_plan(self) -> Optional[Dict[str, Any]]:
         """Get the current active training plan with its workouts."""
         query = self.load_query("get_active_plan")
-        rows = self.execute_query(query)
+        rows = self.execute_query(query, (self.athlete_id, self.athlete_id))
 
         if not rows:
             return None
@@ -535,15 +638,65 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
 
     def get_plan_history(self) -> List[Dict[str, Any]]:
         """Return all training plans (active + archived) ordered by creation date."""
-        rows = self.execute_query(
-            """
-            SELECT plan_id, goal, start_date, end_date, status, created_at,
-                   (SELECT COUNT(*) FROM planned_workouts
-                    WHERE plan_id = tp.plan_id) AS workout_count,
-                   (SELECT COUNT(*) FROM planned_workouts
-                    WHERE plan_id = tp.plan_id AND completed = 1) AS completed_count
-            FROM training_plans tp
-            ORDER BY created_at DESC
-            """
-        )
+        if self.athlete_id is not None:
+            rows = self.execute_query(
+                """
+                SELECT plan_id, goal, start_date, end_date, status, created_at,
+                       (SELECT COUNT(*) FROM planned_workouts
+                        WHERE plan_id = tp.plan_id) AS workout_count,
+                       (SELECT COUNT(*) FROM planned_workouts
+                        WHERE plan_id = tp.plan_id AND completed = 1) AS completed_count
+                FROM training_plans tp
+                WHERE athlete_id = ?
+                ORDER BY created_at DESC
+                """,
+                (self.athlete_id,),
+            )
+        else:
+            rows = self.execute_query(
+                """
+                SELECT plan_id, goal, start_date, end_date, status, created_at,
+                       (SELECT COUNT(*) FROM planned_workouts
+                        WHERE plan_id = tp.plan_id) AS workout_count,
+                       (SELECT COUNT(*) FROM planned_workouts
+                        WHERE plan_id = tp.plan_id AND completed = 1) AS completed_count
+                FROM training_plans tp
+                ORDER BY created_at DESC
+                """
+            )
         return [dict(row) for row in rows]
+
+    # ── Token Management Methods ───────────────────────────────────────
+
+    def upsert_user_tokens(  # pylint: disable=too-many-positional-arguments
+        self,
+        athlete_id: int,
+        access_token: str,
+        refresh_token: str,
+        expires_at: int = 0,
+        scope: str = None,
+    ) -> None:
+        """Persist OAuth tokens for a user."""
+        cols = "athlete_id, access_token, refresh_token, expires_at, scope, updated_at"
+        with self.get_connection() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO users ({cols})
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(athlete_id) DO UPDATE SET
+                    access_token = excluded.access_token,
+                    refresh_token = excluded.refresh_token,
+                    expires_at = excluded.expires_at,
+                    scope = excluded.scope,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (athlete_id, access_token, refresh_token, expires_at, scope),
+            )
+
+    def get_user_tokens(self, athlete_id: int) -> Optional[Dict[str, Any]]:
+        """Return stored tokens for an athlete, or None if not found."""
+        rows = self.execute_query(
+            "SELECT access_token, refresh_token, expires_at FROM users WHERE athlete_id = ?",
+            (athlete_id,),
+        )
+        return dict(rows[0]) if rows else None

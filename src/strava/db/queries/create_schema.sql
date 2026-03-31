@@ -69,7 +69,10 @@ CREATE TABLE IF NOT EXISTS activities (
     
     -- Metadata
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Multi-user support
+    athlete_id INTEGER
 );
 
 -- Detailed activity streams table (from TCX/FIT files)
@@ -219,7 +222,10 @@ CREATE TABLE IF NOT EXISTS training_plans (
     status TEXT DEFAULT 'active',  -- active, completed, archived
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    raw_llm_response TEXT  -- original LLM text for reference
+    raw_llm_response TEXT,  -- original LLM text for reference
+
+    -- Multi-user support
+    athlete_id INTEGER
 );
 
 -- Individual workouts within a plan
@@ -244,6 +250,17 @@ CREATE TABLE IF NOT EXISTS planned_workouts (
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+
+-- OAuth tokens per user (replaces .env token storage for multi-user support)
+CREATE TABLE IF NOT EXISTS users (
+    athlete_id    INTEGER PRIMARY KEY,
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at    INTEGER NOT NULL DEFAULT 0,
+    scope         TEXT,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Training plan indexes
