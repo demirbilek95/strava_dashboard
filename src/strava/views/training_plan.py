@@ -368,6 +368,22 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
     if database is None:
         database = DatabaseManager()
 
+    if not st.session_state.get("gemini_api_key"):
+        st.info(
+            "The AI Coach requires a **Google Gemini API key**. "
+            "Your key is only held in memory for this session and never stored. "
+            "[Get a free key at Google AI Studio](https://aistudio.google.com/app/apikey)."
+        )
+        key_input = st.text_input(
+            "Gemini API Key",
+            type="password",
+            placeholder="AIza...",
+        )
+        if st.button("Save key for this session", disabled=not key_input):
+            st.session_state["gemini_api_key"] = key_input
+            st.rerun()
+        return
+
     database.create_tables()
     _sync_planned_workouts_with_activities(database, dataframe)
     _render_athlete_snapshot(database)

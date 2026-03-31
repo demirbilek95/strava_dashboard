@@ -23,7 +23,7 @@ def _set_draft_plan_state(plan_text: str, chat, goal: str) -> None:
 
 
 def _get_coach(database: DatabaseManager) -> AICoach:
-    """Return a cached AICoach, recreating it only when HR zones change.
+    """Return a cached AICoach, recreating it only when HR zones or API key change.
 
     Caching the instance across Streamlit reruns keeps the underlying
     genai.Client alive so stored chat sessions remain usable for follow-up
@@ -35,10 +35,11 @@ def _get_coach(database: DatabaseManager) -> AICoach:
         st.session_state.get("global_z3", 174),
         st.session_state.get("global_z4", 188),
     ]
+    api_key = st.session_state.get("gemini_api_key")
     cached: Optional[AICoach] = st.session_state.get("_coach_instance")
-    if cached is not None and cached.hr_zones == zones:
+    if cached is not None and cached.hr_zones == zones and cached.api_key == api_key:
         return cached
-    coach = AICoach(database, hr_zones=zones)
+    coach = AICoach(database, hr_zones=zones, api_key=api_key)
     st.session_state["_coach_instance"] = coach
     return coach
 
