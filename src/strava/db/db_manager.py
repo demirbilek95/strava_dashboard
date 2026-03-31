@@ -291,6 +291,26 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
             cursor.execute(query, tuple(activity_data.values()))
             return activity_data.get("activity_id", cursor.lastrowid)
 
+    def claim_unclaimed_activities(self, athlete_id: int) -> int:
+        """Assign athlete_id to any rows that have athlete_id = NULL.
+
+        Called once after the first OAuth login so existing single-user data
+        is not lost when athlete scoping kicks in.  Returns the number of
+        rows updated.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE activities SET athlete_id = ? WHERE athlete_id IS NULL",
+                (athlete_id,),
+            )
+            rows_updated = cursor.rowcount
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE training_plans SET athlete_id = ? WHERE athlete_id IS NULL",
+                (athlete_id,),
+            )
+        return rows_updated
+
     def insert_stream_batch(self, stream_records: List[Dict[str, Any]]):
         """
         Insert multiple stream records in batch.

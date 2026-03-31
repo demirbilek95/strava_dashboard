@@ -67,6 +67,8 @@ def handle_authorization(api: StravaAPI, auth_code: str):
             )
             st.session_state["athlete_id"] = athlete_id
             st.session_state["athlete_name"] = athlete.get("firstname", "Athlete")
+            # Migrate any pre-existing unscoped rows to this athlete
+            database.claim_unclaimed_activities(athlete_id)
 
         # Run Import
         scoped_db = DatabaseManager(athlete_id=athlete_id) if athlete_id else database
