@@ -14,23 +14,35 @@ class StravaAPI:
 
     BASE_URL = "https://www.strava.com/api/v3"
 
-    def __init__(self, access_token: Optional[str] = None):
+    def __init__(
+        self,
+        access_token: Optional[str] = None,
+        refresh_token: Optional[str] = None,
+        athlete_id: Optional[int] = None,
+        db=None,
+    ):
         """
         Initialize Strava API client.
 
         Args:
             access_token: Strava access token. If None, reads from env.
+            refresh_token: Strava refresh token. If None, reads from env.
+            athlete_id: Athlete ID for persisting refreshed tokens to DB.
+            db: DatabaseManager instance for persisting refreshed tokens.
         """
         # Load environment variables (done at module level but reload to be safe)
         dotenv.load_dotenv()
 
         self.client_id = os.getenv("STRAVA_CLIENT_ID")
         self.client_secret = os.getenv("STRAVA_CLIENT_SECRET")
-        self.refresh_token = os.getenv("STRAVA_REFRESH_TOKEN")
+        self.refresh_token = refresh_token or os.getenv("STRAVA_REFRESH_TOKEN")
 
         self.access_token = access_token or os.getenv("STRAVA_ACCESS_TOKEN")
         # Removing strict requirement for access token at initialization
         # as it may be needed to generate authorization URL before tokens are acquired.
+
+        self.athlete_id = athlete_id
+        self.db = db  # DatabaseManager for persisting refreshed tokens
 
         self.session = requests.Session()
         if self.access_token:
@@ -61,8 +73,13 @@ class StravaAPI:
         self.refresh_token = data.get("refresh_token", self.refresh_token)
         self._update_session_header()
 
-        # Update .env file
-        self._update_env_file(self.access_token, self.refresh_token)
+        if self.db and self.athlete_id:
+            expires_at = data.get("expires_at", 0)
+            self.db.upsert_user_tokens(
+                self.athlete_id, self.access_token, self.refresh_token, expires_at
+            )
+        else:
+            self._update_env_file(self.access_token, self.refresh_token)
 
     def get_authorization_url(self) -> str:
         """Generate the authorization URL for Strava OAuth."""
@@ -106,8 +123,6 @@ class StravaAPI:
         self.refresh_token = data["refresh_token"]
         self._update_session_header()
 
-        # Update .env file
-        self._update_env_file(self.access_token, self.refresh_token)
         return data
 
     def _update_env_file(self, access_token: str, refresh_token: str):
