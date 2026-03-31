@@ -1,4 +1,5 @@
 import datetime
+import os
 import time
 
 import streamlit as st
@@ -14,6 +15,32 @@ from strava.views.training_plan import page_ai_training_plan
 
 # Set page config
 st.set_page_config(page_title="Strava Analytics", layout="wide")
+
+
+def _check_ip_allowlist() -> None:
+    """Block the request if ALLOWED_IPS is set and the client IP is not on the list.
+
+    Configure via env var: ALLOWED_IPS=1.2.3.4,5.6.7.8
+    Leave unset (or empty) to allow all IPs (default / local dev).
+
+    Relies on the X-Forwarded-For header set by the upstream proxy (Render,
+    Cloudflare, nginx). The first address in that header is the real client IP.
+    """
+    raw = os.getenv("ALLOWED_IPS", "").strip()
+    if not raw:
+        return  # No allowlist — open access
+
+    allowed = {ip.strip() for ip in raw.split(",") if ip.strip()}
+
+    # Streamlit >= 1.31 exposes all request headers via st.context.headers
+    forwarded_for = st.context.headers.get("X-Forwarded-For", "")
+    real_ip = st.context.headers.get("X-Real-Ip", "")
+    # X-Forwarded-For is a comma-separated chain; leftmost entry is the client
+    client_ip = (forwarded_for.split(",")[0] if forwarded_for else real_ip).strip()
+
+    if client_ip not in allowed:
+        st.error("403 — Access denied.")
+        st.stop()
 
 
 def handle_authorization(api: StravaAPI, auth_code: str):
@@ -202,6 +229,7 @@ def auto_sync(database: DatabaseManager) -> None:
 
 def main():  # pylint: disable=too-many-branches,too-many-statements
     """Main application entry point."""
+    _check_ip_allowlist()
     athlete_id = st.session_state.get("athlete_id")
     database = DatabaseManager(athlete_id=athlete_id)
 
