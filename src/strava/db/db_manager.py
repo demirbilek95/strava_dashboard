@@ -9,6 +9,36 @@ from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
 import pandas as pd
 
+# ── Token encryption ──────────────────────────────────────────────────────────
+# When TOKEN_ENCRYPTION_KEY is set, OAuth tokens are encrypted at rest using
+# Fernet symmetric encryption (AES-128-CBC + HMAC-SHA256).
+# Generate a key with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+try:
+    from cryptography.fernet import Fernet as _Fernet
+
+    _ENCRYPTION_KEY = os.getenv("TOKEN_ENCRYPTION_KEY")
+    _fernet = _Fernet(_ENCRYPTION_KEY.encode()) if _ENCRYPTION_KEY else None
+except ImportError:  # cryptography not installed
+    _fernet = None
+
+
+def _encrypt(value: str) -> str:
+    """Encrypt a string token. Returns ciphertext or plaintext if no key is set."""
+    if _fernet is None:
+        return value
+    return _fernet.encrypt(value.encode()).decode()
+
+
+def _decrypt(value: str) -> str:
+    """Decrypt a string token. Returns plaintext; falls back to value if decryption fails."""
+    if _fernet is None:
+        return value
+    try:
+        return _fernet.decrypt(value.encode()).decode()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return value  # already plaintext (migration: unencrypted rows)
+
 
 class DatabaseManager:  # pylint: disable=too-many-public-methods
     """Manages SQLite database connections and operations for Strava data."""
@@ -690,13 +720,20 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
                     scope = excluded.scope,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (athlete_id, access_token, refresh_token, expires_at, scope),
+                (athlete_id, _encrypt(access_token), _encrypt(refresh_token), expires_at, scope),
             )
 
     def get_user_tokens(self, athlete_id: int) -> Optional[Dict[str, Any]]:
-        """Return stored tokens for an athlete, or None if not found."""
+        """Return decrypted tokens for an athlete, or None if not found."""
         rows = self.execute_query(
             "SELECT access_token, refresh_token, expires_at FROM users WHERE athlete_id = ?",
             (athlete_id,),
         )
-        return dict(rows[0]) if rows else None
+        if not rows:
+            return None
+        row = dict(rows[0])
+        return {
+            "access_token": _decrypt(row["access_token"]),
+            "refresh_token": _decrypt(row["refresh_token"]),
+            "expires_at": row["expires_at"],
+        }
