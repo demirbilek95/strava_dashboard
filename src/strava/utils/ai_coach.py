@@ -709,6 +709,11 @@ class AICoach:
         recent["week"] = recent["activity_date"].dt.isocalendar().week
         recent["year"] = recent["activity_date"].dt.isocalendar().year
 
+        today = pd.Timestamp.now(tz="UTC")
+        cur_iso = today.isocalendar()
+        current_week_key = (cur_iso[0], cur_iso[1])
+        days_elapsed = today.weekday() + 1  # Mon=1 … Sun=7
+
         lines = [f"Weekly summary (last {weeks} weeks):"]
         for (year, week), group in recent.groupby(["year", "week"]):
             total_dist_km = group["distance"].sum() / 1000
@@ -717,10 +722,17 @@ class AICoach:
             avg_hr = group["average_heart_rate"].mean()
             hr_str = f"{avg_hr:.0f}bpm" if pd.notnull(avg_hr) else "N/A"
             total_load = group["suffer_score"].sum()
+            if (year, week) == current_week_key:
+                suffix = (
+                    f" ← IN PROGRESS ({days_elapsed}/7 days elapsed; "
+                    "do NOT compare mileage or load to completed weeks)"
+                )
+            else:
+                suffix = ""
             lines.append(
                 f"- W{week}/{year}: {n_runs} runs, "
                 f"{total_dist_km:.1f}km, {_fmt_duration(total_time_s)}, "
-                f"Load: {total_load:.0f}, avg HR {hr_str}"
+                f"Load: {total_load:.0f}, avg HR {hr_str}{suffix}"
             )
         return "\n".join(lines)
 
