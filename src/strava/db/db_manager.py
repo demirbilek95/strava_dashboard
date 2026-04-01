@@ -77,7 +77,7 @@ class DatabaseManager:  # pylint: disable=too-many-public-methods
         if self._turso_url and self._turso_token:
             import libsql_experimental as libsql  # pylint: disable=import-outside-toplevel,import-error
 
-            conn = libsql.connect(
+            conn = libsql.connect(  # pylint: disable=no-member
                 str(self.db_path), sync_url=self._turso_url, auth_token=self._turso_token
             )
             conn.sync()
