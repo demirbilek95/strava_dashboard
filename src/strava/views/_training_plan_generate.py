@@ -52,10 +52,6 @@ def _show_active_plan(database: DatabaseManager, active_plan: dict) -> None:
         f"{active_plan.get('end_date', 'ongoing')} | "
         f"{len(active_plan['workouts'])} workouts"
     )
-    if active_plan.get("raw_llm_response"):
-        with st.expander("\U0001f4d6 View full plan details"):
-            st.markdown(active_plan["raw_llm_response"])
-
     col1, col2 = st.columns(2)
     with col1:
         if st.button("\U0001f4dd Create New Plan (archives current)", key="new_plan_btn"):

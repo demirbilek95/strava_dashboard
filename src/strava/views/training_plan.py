@@ -396,7 +396,9 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
         "\U0001f4ac Feedback & Chat",
     ]
 
-    st.session_state.setdefault("main_nav_radio", tab_names[0])
+    active_plan_exists = database.get_active_plan() is not None
+    default_tab = tab_names[1] if active_plan_exists else tab_names[0]
+    st.session_state.setdefault("main_nav_radio", default_tab)
 
     if "nav_target" in st.session_state:
         target = st.session_state.pop("nav_target")
