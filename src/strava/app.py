@@ -229,7 +229,7 @@ def auto_sync(database: DatabaseManager) -> None:
         pass  # Silent failure — don't interrupt the dashboard
 
 
-def main():  # pylint: disable=too-many-branches,too-many-statements
+def main():  # pylint: disable=too-many-branches,too-many-statements  # noqa: C901
     """Main application entry point."""
     _check_ip_allowlist()
     athlete_id = st.session_state.get("athlete_id")
