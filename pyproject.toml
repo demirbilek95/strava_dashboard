@@ -33,10 +33,12 @@ dev = [
     "pytest (>=9.0.2,<10.0.0)"
 ]
 
-
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pip]
+prefer-binary = true
 
 [tool.black]
 line-length = 100
@@ -57,4 +59,3 @@ exclude = '''
 [tool.pytest.ini_options]
 pythonpath = ["src", "src/strava"]
 testpaths = ["tests"]
-
