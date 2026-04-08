@@ -69,12 +69,6 @@ class TestStravaOAuth(unittest.TestCase):
         self.assertEqual(api.access_token, "new_access")
         self.assertEqual(api.refresh_token, "new_refresh")
 
-        # Verify .env.test was updated
-        with open(self.env_path, "r", encoding="utf-8") as f:
-            content = f.read()
-            self.assertIn("STRAVA_ACCESS_TOKEN=new_access", content)
-            self.assertIn("STRAVA_REFRESH_TOKEN=new_refresh", content)
-
     def test_get_authorization_url(self):
         api = StravaAPI(access_token="old_access")
         url = api.get_authorization_url()

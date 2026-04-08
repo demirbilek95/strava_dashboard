@@ -296,13 +296,15 @@ class AICoach:
         self,
         database: Optional[DatabaseManager] = None,
         hr_zones: Optional[list] = None,
+        api_key: Optional[str] = None,
     ):
         """Initialize the AI Coach."""
         load_dotenv()
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            raise ValueError("No Gemini API key found. Set GEMINI_API_KEY in your .env file.")
+            raise ValueError("No Gemini API key found.")
 
+        self.api_key = api_key
         self.client = genai.Client(api_key=api_key)
         self.model_id = "gemini-2.5-flash"
         self.db = database or DatabaseManager()
@@ -707,6 +709,11 @@ class AICoach:
         recent["week"] = recent["activity_date"].dt.isocalendar().week
         recent["year"] = recent["activity_date"].dt.isocalendar().year
 
+        today = pd.Timestamp.now(tz="UTC")
+        cur_iso = today.isocalendar()
+        current_week_key = (cur_iso[0], cur_iso[1])
+        days_elapsed = today.weekday() + 1  # Mon=1 … Sun=7
+
         lines = [f"Weekly summary (last {weeks} weeks):"]
         for (year, week), group in recent.groupby(["year", "week"]):
             total_dist_km = group["distance"].sum() / 1000
@@ -715,10 +722,17 @@ class AICoach:
             avg_hr = group["average_heart_rate"].mean()
             hr_str = f"{avg_hr:.0f}bpm" if pd.notnull(avg_hr) else "N/A"
             total_load = group["suffer_score"].sum()
+            if (year, week) == current_week_key:
+                suffix = (
+                    f" ← IN PROGRESS ({days_elapsed}/7 days elapsed; "
+                    "do NOT compare mileage or load to completed weeks)"
+                )
+            else:
+                suffix = ""
             lines.append(
                 f"- W{week}/{year}: {n_runs} runs, "
                 f"{total_dist_km:.1f}km, {_fmt_duration(total_time_s)}, "
-                f"Load: {total_load:.0f}, avg HR {hr_str}"
+                f"Load: {total_load:.0f}, avg HR {hr_str}{suffix}"
             )
         return "\n".join(lines)
 
@@ -1039,19 +1053,24 @@ class AICoach:
         if not plans:
             return "No training plans found. This athlete has not used a structured plan yet."
 
-        lines = ["Training plan adherence by workout type:"]
+        lines = ["Training plan adherence by workout type (past workouts only):"]
         for plan in plans[:3]:
             plan_id = plan["plan_id"]
             status = plan["status"].upper()
-            total = plan.get("workout_count", 0)
-            done = plan.get("completed_count", 0)
-            overall_pct = int(done / total * 100) if total > 0 else 0
+            by_type = self.db.get_adherence_by_workout_type(plan_id)
+            # Derive overall from past-only rows so future workouts don't deflate the score.
+            past_total = sum(r["total"] for r in by_type)
+            past_done = sum(r["completed"] for r in by_type)
+            if past_total == 0:
+                overall_str = "Plan just started — no past workouts to assess yet."
+            else:
+                overall_pct = int(past_done / past_total * 100)
+                overall_str = f"Overall: {overall_pct}% ({past_done}/{past_total} past workouts)"
             lines.append(
                 f"\n[{status}] \"{plan['goal']}\" "
                 f"({plan['start_date']} → {plan.get('end_date', 'ongoing')}) "
-                f"— Overall: {overall_pct}% ({done}/{total})"
+                f"— {overall_str}"
             )
-            by_type = self.db.get_adherence_by_workout_type(plan_id)
             if by_type:
                 for row in by_type:
                     pct = int(row["completed"] / row["total"] * 100) if row["total"] > 0 else 0
@@ -1060,8 +1079,6 @@ class AICoach:
                         f"  {status_icon} {row['workout_type'].replace('_', ' ').title()}: "
                         f"{row['completed']}/{row['total']} ({pct}%)"
                     )
-            else:
-                lines.append("  No workout type breakdown available.")
 
         return "\n".join(lines)
 
@@ -1357,14 +1374,17 @@ If a day has multiple sessions, output SEPARATE workout objects with the same "d
     @staticmethod
     def _plan_to_json_str(plan: Dict[str, Any]) -> str:
         """Convert an active plan dict (from DB) into a JSON string for prompts."""
-        workouts_by_week: Dict[int, list] = defaultdict(list)
+        workouts_by_week: Dict[tuple, list] = defaultdict(list)
         for w in plan.get("workouts", []):
             w_date = w.get("workout_date")
             if not w_date:
                 continue
             try:
                 dt = datetime.date.fromisoformat(w_date)
-                workouts_by_week[dt.isocalendar()[1]].append(w)
+                iso = dt.isocalendar()
+                workouts_by_week[(iso[0], iso[1])].append(
+                    w
+                )  # (year, week) preserves cross-year order
             except ValueError:
                 pass
 

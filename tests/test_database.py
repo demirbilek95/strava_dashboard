@@ -147,7 +147,7 @@ def test_get_activities_with_streams(db_manager):
 
     # Use the specific method or manual query execution
     query = db_manager.load_query("get_activities_with_streams")
-    rows = db_manager.execute_query(query)
+    rows = db_manager.execute_query(query, (None, None))
 
     assert len(rows) == 1
     row = rows[0]

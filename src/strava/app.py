@@ -1,4 +1,5 @@
 import datetime
+import os
 import time
 
 import streamlit as st
@@ -16,11 +17,37 @@ from strava.views.training_plan import page_ai_training_plan
 st.set_page_config(page_title="Strava Analytics", layout="wide")
 
 
+def _check_ip_allowlist() -> None:
+    """Block the request if ALLOWED_IPS is set and the client IP is not on the list.
+
+    Configure via env var: ALLOWED_IPS=1.2.3.4,5.6.7.8
+    Leave unset (or empty) to allow all IPs (default / local dev).
+
+    Relies on the X-Forwarded-For header set by the upstream proxy (Render,
+    Cloudflare, nginx). The first address in that header is the real client IP.
+    """
+    raw = os.getenv("ALLOWED_IPS", "").strip()
+    if not raw:
+        return  # No allowlist — open access
+
+    allowed = {ip.strip() for ip in raw.split(",") if ip.strip()}
+
+    # Streamlit >= 1.31 exposes all request headers via st.context.headers
+    forwarded_for = st.context.headers.get("X-Forwarded-For", "")
+    real_ip = st.context.headers.get("X-Real-Ip", "")
+    # X-Forwarded-For is a comma-separated chain; leftmost entry is the client
+    client_ip = (forwarded_for.split(",")[0] if forwarded_for else real_ip).strip()
+
+    if client_ip not in allowed:
+        st.error("403 — Access denied.")
+        st.stop()
+
+
 def handle_authorization(api: StravaAPI, auth_code: str):
     """Handle the OAuth code exchange and initial data import."""
     try:
         with st.spinner("Exchanging code for tokens..."):
-            api.exchange_code_for_tokens(auth_code)
+            token_data = api.exchange_code_for_tokens(auth_code)
 
         st.success("Successfully connected to Strava!")
 
@@ -28,8 +55,24 @@ def handle_authorization(api: StravaAPI, auth_code: str):
         database = DatabaseManager()
         database.create_tables()
 
+        # Store athlete info in session
+        athlete = token_data.get("athlete") or {}
+        athlete_id = athlete.get("id")
+        if athlete_id:
+            database.upsert_user_tokens(
+                athlete_id,
+                api.access_token,
+                api.refresh_token,
+                token_data.get("expires_at", 0),
+            )
+            st.session_state["athlete_id"] = athlete_id
+            st.session_state["athlete_name"] = athlete.get("firstname", "Athlete")
+            # Migrate any pre-existing unscoped rows to this athlete
+            database.claim_unclaimed_activities(athlete_id)
+
         # Run Import
-        importer = StravaImporter(database, api)
+        scoped_db = DatabaseManager(athlete_id=athlete_id) if athlete_id else database
+        importer = StravaImporter(scoped_db, api)
 
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -155,10 +198,21 @@ _AUTO_SYNC_INTERVAL_S = 5 * 60  # 5 minutes
 
 def auto_sync(database: DatabaseManager) -> None:
     """Incrementally sync new activities. Shows a spinner on the first run only."""
+    athlete_id = st.session_state.get("athlete_id")
     is_first = "last_sync_time" not in st.session_state
     st.session_state["last_sync_time"] = time.time()
     try:
-        api = StravaAPI()
+        base_db = DatabaseManager()
+        tokens = base_db.get_user_tokens(athlete_id) if athlete_id else None
+        if tokens:
+            api = StravaAPI(
+                access_token=tokens["access_token"],
+                refresh_token=tokens["refresh_token"],
+                athlete_id=athlete_id,
+                db=base_db,
+            )
+        else:
+            api = StravaAPI()  # Fall back to .env for local dev
         importer = StravaImporter(database, api)
         if is_first:
             with st.spinner("Checking for new activities..."):
@@ -175,9 +229,11 @@ def auto_sync(database: DatabaseManager) -> None:
         pass  # Silent failure — don't interrupt the dashboard
 
 
-def main():
+def main():  # pylint: disable=too-many-branches,too-many-statements  # noqa: C901
     """Main application entry point."""
-    database = DatabaseManager()
+    _check_ip_allowlist()
+    athlete_id = st.session_state.get("athlete_id")
+    database = DatabaseManager(athlete_id=athlete_id)
 
     # ── Auto-detect OAuth redirect code from URL query params ──────
     # Strava redirects back to this app with ?code=<auth_code>&scope=...
@@ -214,10 +270,16 @@ def main():
     # ── Main dashboard ─────────────────────────────────────────────
     st.title("🏃 Strava Activity Analytics")
 
-    dataframe = load_data()
+    dataframe = load_data(athlete_id=athlete_id)
 
     # Navigation
     st.sidebar.title("Navigation")
+
+    # Show athlete name if logged in
+    athlete_name = st.session_state.get("athlete_name")
+    if athlete_name:
+        st.sidebar.markdown(f"👤 **{athlete_name}**")
+
     page_options = [
         "General Overview",
         "Activity Run Details",
@@ -257,6 +319,14 @@ def main():
     z4 = st.sidebar.number_input("Zone 4 Limit (Threshold)", value=188, step=1, key="global_z4")
 
     zones = [z1, z2, z3, z4]
+
+    # ── Logout button ───────────────────────────────────────────────
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Log out"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.cache_data.clear()
+        st.rerun()
 
     if page == "General Overview":
         page_general(dataframe, zones, start_date)

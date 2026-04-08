@@ -100,8 +100,10 @@ def _build_activity_feedback_prompt(
         if not matches.empty:
             activity_row = matches.iloc[0]
 
-    workout_type = int(activity_row.get("workout_type") or 0) if activity_row is not None else 0
-    distance_m = float(activity_row.get("distance") or 0) if activity_row is not None else 0
+    _wt = activity_row.get("workout_type") if activity_row is not None else None
+    workout_type = 0 if _wt is None or pd.isna(_wt) else int(_wt)
+    _dist = activity_row.get("distance") if activity_row is not None else None
+    distance_m = 0.0 if _dist is None or pd.isna(_dist) else float(_dist)
 
     is_race = workout_type == _WT_RACE
     is_interval = workout_type == _WT_WORKOUT
@@ -368,6 +370,22 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
     if database is None:
         database = DatabaseManager()
 
+    if not st.session_state.get("gemini_api_key"):
+        st.info(
+            "The AI Coach requires a **Google Gemini API key**. "
+            "Your key is only held in memory for this session and never stored. "
+            "[Get a free key at Google AI Studio](https://aistudio.google.com/app/apikey)."
+        )
+        key_input = st.text_input(
+            "Gemini API Key",
+            type="password",
+            placeholder="AIza...",
+        )
+        if st.button("Save key for this session", disabled=not key_input):
+            st.session_state["gemini_api_key"] = key_input
+            st.rerun()
+        return
+
     database.create_tables()
     _sync_planned_workouts_with_activities(database, dataframe)
     _render_athlete_snapshot(database)
@@ -378,7 +396,9 @@ def page_ai_training_plan(dataframe: pd.DataFrame, database: Optional[DatabaseMa
         "\U0001f4ac Feedback & Chat",
     ]
 
-    st.session_state.setdefault("main_nav_radio", tab_names[0])
+    active_plan_exists = database.get_active_plan() is not None
+    default_tab = tab_names[1] if active_plan_exists else tab_names[0]
+    st.session_state.setdefault("main_nav_radio", default_tab)
 
     if "nav_target" in st.session_state:
         target = st.session_state.pop("nav_target")

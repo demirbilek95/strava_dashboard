@@ -457,12 +457,6 @@ def _tab_calendar(database: DatabaseManager, dataframe: pd.DataFrame) -> None:
 
     today = datetime.date.today()
     default_year, default_month = today.year, today.month
-    if plan.get("start_date"):
-        try:
-            start = datetime.date.fromisoformat(plan["start_date"])
-            default_year, default_month = start.year, start.month
-        except ValueError:
-            pass
 
     _render_month_nav("cal", default_month, default_year)
     year = st.session_state.get("cal_year", default_year)

@@ -36,4 +36,5 @@ SELECT
     gear,
     filename
 FROM activities
+WHERE (? IS NULL OR athlete_id = ?)
 ORDER BY activity_date DESC

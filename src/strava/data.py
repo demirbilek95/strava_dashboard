@@ -7,7 +7,7 @@ _DB_PATH = Path(__file__).parent.parent.parent / "data" / "strava.db"
 
 
 @st.cache_data(ttl=300)
-def load_data():
+def load_data(athlete_id=None):
     """Load activity data from the database."""
     try:
         if not _DB_PATH.exists():
@@ -17,12 +17,12 @@ def load_data():
             )
             return pd.DataFrame()
 
-        db = DatabaseManager(str(_DB_PATH))
+        db = DatabaseManager(str(_DB_PATH), athlete_id=athlete_id)
 
         # Load query from file
         query = db.load_query("get_all_activities")
 
-        rows = db.execute_query(query)
+        rows = db.execute_query(query, (athlete_id, athlete_id))
         df = pd.DataFrame([dict(row) for row in rows])
 
         if df.empty:
@@ -56,12 +56,13 @@ def load_data():
 
 
 @st.cache_data(ttl=300)
-def get_activity_stream(activity_id: int) -> pd.DataFrame:
+def get_activity_stream(activity_id: int, athlete_id=None) -> pd.DataFrame:
     """
     Get detailed stream data for a specific activity from the database.
 
     Args:
         activity_id: The activity ID
+        athlete_id: Optional athlete ID (used for cache keying)
 
     Returns:
         DataFrame with stream data (timestamp, HR, GPS, pace, etc.)
@@ -70,7 +71,7 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
         if not _DB_PATH.exists():
             return pd.DataFrame()
 
-        db = DatabaseManager(str(_DB_PATH))
+        db = DatabaseManager(str(_DB_PATH), athlete_id=athlete_id)
         stream_records = db.get_activity_stream(int(activity_id))
 
         if not stream_records:
@@ -90,7 +91,7 @@ def get_activity_stream(activity_id: int) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300)
-def get_activity_laps(activity_id: int) -> pd.DataFrame:
+def get_activity_laps(activity_id: int, athlete_id=None) -> pd.DataFrame:
     """Get lap data for an activity, formatted for the deep dive view.
 
     Returns a DataFrame with columns: Lap, Distance (km), Time (s),
@@ -100,7 +101,7 @@ def get_activity_laps(activity_id: int) -> pd.DataFrame:
         if not _DB_PATH.exists():
             return pd.DataFrame()
 
-        db = DatabaseManager(str(_DB_PATH))
+        db = DatabaseManager(str(_DB_PATH), athlete_id=athlete_id)
         laps = db.get_activity_laps(int(activity_id))
 
         if not laps:
@@ -126,7 +127,7 @@ def get_activity_laps(activity_id: int) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300)
-def get_activities_with_streams() -> pd.DataFrame:
+def get_activities_with_streams(athlete_id=None) -> pd.DataFrame:
     """
     Get list of activities that have detailed stream data available.
 
@@ -137,9 +138,9 @@ def get_activities_with_streams() -> pd.DataFrame:
         if not _DB_PATH.exists():
             return pd.DataFrame()
 
-        db = DatabaseManager(str(_DB_PATH))
+        db = DatabaseManager(str(_DB_PATH), athlete_id=athlete_id)
         query = db.load_query("get_activities_with_streams")
-        rows = db.execute_query(query)
+        rows = db.execute_query(query, (athlete_id, athlete_id))
 
         return pd.DataFrame([dict(row) for row in rows])
 

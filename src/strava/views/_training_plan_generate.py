@@ -23,7 +23,7 @@ def _set_draft_plan_state(plan_text: str, chat, goal: str) -> None:
 
 
 def _get_coach(database: DatabaseManager) -> AICoach:
-    """Return a cached AICoach, recreating it only when HR zones change.
+    """Return a cached AICoach, recreating it only when HR zones or API key change.
 
     Caching the instance across Streamlit reruns keeps the underlying
     genai.Client alive so stored chat sessions remain usable for follow-up
@@ -35,10 +35,11 @@ def _get_coach(database: DatabaseManager) -> AICoach:
         st.session_state.get("global_z3", 174),
         st.session_state.get("global_z4", 188),
     ]
+    api_key = st.session_state.get("gemini_api_key")
     cached: Optional[AICoach] = st.session_state.get("_coach_instance")
-    if cached is not None and cached.hr_zones == zones:
+    if cached is not None and cached.hr_zones == zones and cached.api_key == api_key:
         return cached
-    coach = AICoach(database, hr_zones=zones)
+    coach = AICoach(database, hr_zones=zones, api_key=api_key)
     st.session_state["_coach_instance"] = coach
     return coach
 
@@ -51,10 +52,6 @@ def _show_active_plan(database: DatabaseManager, active_plan: dict) -> None:
         f"{active_plan.get('end_date', 'ongoing')} | "
         f"{len(active_plan['workouts'])} workouts"
     )
-    if active_plan.get("raw_llm_response"):
-        with st.expander("\U0001f4d6 View full plan details"):
-            st.markdown(active_plan["raw_llm_response"])
-
     col1, col2 = st.columns(2)
     with col1:
         if st.button("\U0001f4dd Create New Plan (archives current)", key="new_plan_btn"):
@@ -101,6 +98,21 @@ def _show_adapt_input(database: DatabaseManager, active_plan: dict) -> None:
 
 def _show_goal_input(database: DatabaseManager) -> None:
     """Show goal input form and handle plan generation."""
+    # Offer to restore the previous plan if one exists in archive.
+    history = database.get_plan_history()
+    archived = [p for p in history if p["status"] == "archived"]
+    if archived:
+        last = archived[0]
+        st.info(
+            f"Your previous plan **\"{last['goal']}\"** is archived. "
+            "Restore it instead of starting fresh?"
+        )
+        if st.button("↩️ Restore previous plan", key="restore_plan_btn"):
+            if database.restore_last_archived_plan():
+                st.success("Plan restored!")
+                st.rerun()
+        st.divider()
+
     user_goal = st.text_area(
         "What is your running goal?",
         height=100,
@@ -133,21 +145,30 @@ def _handle_accept(database: DatabaseManager) -> None:
         return
 
     with st.spinner("Saving plan to database..."):
-        if st.session_state.get("adapting_plan_id"):
-            database.archive_plan(st.session_state["adapting_plan_id"])
+        adapting_plan_id = st.session_state.get("adapting_plan_id")
+        if adapting_plan_id:
+            # Surgical update: replace only incomplete future workouts so that
+            # a partial Gemini response never wipes the rest of the plan.
+            workout_records = AICoach.plan_json_to_workouts(adapting_plan_id, plan_json)
+            database.replace_future_workouts(adapting_plan_id, workout_records)
+            database.update_plan_metadata(
+                adapting_plan_id,
+                plan_json.get("end_date"),
+                st.session_state["draft_plan_text"],
+            )
             st.session_state["adapting_plan_id"] = None
-
-        plan_id = database.insert_training_plan(
-            {
-                "goal": st.session_state["user_goal"],
-                "start_date": plan_json.get("start_date", datetime.date.today().isoformat()),
-                "end_date": plan_json.get("end_date"),
-                "status": "active",
-                "raw_llm_response": st.session_state["draft_plan_text"],
-            }
-        )
-        workout_records = AICoach.plan_json_to_workouts(plan_id, plan_json)
-        database.insert_planned_workouts(workout_records)
+        else:
+            plan_id = database.insert_training_plan(
+                {
+                    "goal": st.session_state["user_goal"],
+                    "start_date": plan_json.get("start_date", datetime.date.today().isoformat()),
+                    "end_date": plan_json.get("end_date"),
+                    "status": "active",
+                    "raw_llm_response": st.session_state["draft_plan_text"],
+                }
+            )
+            workout_records = AICoach.plan_json_to_workouts(plan_id, plan_json)
+            database.insert_planned_workouts(workout_records)
 
     st.session_state["draft_plan_text"] = None
     st.session_state["draft_plan_json"] = None
